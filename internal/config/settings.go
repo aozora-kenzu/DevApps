@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// AppSettings stores user-configurable DevApps settings across runs.
+// AppSettings stores user-configurable UniDevUI settings across runs.
 type AppSettings struct {
 	BaseDir  string `json:"baseDir"`
 	Language string `json:"language"` // "en" (default) | "id"
@@ -30,7 +30,7 @@ func AppDir() string {
 	return filepath.Dir(exe)
 }
 
-// SettingsPath returns %APPDATA%\DevApps\settings.json.
+// SettingsPath returns %APPDATA%\UniDevUI\settings.json.
 func SettingsPath() (string, error) {
 	cfgRoot, err := os.UserConfigDir()
 	if err != nil || strings.TrimSpace(cfgRoot) == "" {
@@ -40,10 +40,10 @@ func SettingsPath() (string, error) {
 		}
 		cfgRoot = filepath.Join(home, "AppData", "Roaming")
 	}
-	return filepath.Join(cfgRoot, "DevApps", "settings.json"), nil
+	return filepath.Join(cfgRoot, "UniDevUI", "settings.json"), nil
 }
 
-// LoadSettings loads persisted settings, migrating from legacy DevApp folder if present.
+// LoadSettings loads persisted settings, migrating from legacy DevApps/DevApp folders if present.
 func LoadSettings() (AppSettings, string, error) {
 	sPath, err := SettingsPath()
 	if err != nil {
@@ -53,12 +53,16 @@ func LoadSettings() (AppSettings, string, error) {
 	raw, err := os.ReadFile(sPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Check legacy DevApp settings path before falling back to defaults.
-			legacyPath := filepath.Join(filepath.Dir(filepath.Dir(sPath)), "DevApp", "settings.json")
-			if legacyRaw, lErr := os.ReadFile(legacyPath); lErr == nil {
-				raw = legacyRaw
-				err = nil
-			} else {
+			appDataRoot := filepath.Dir(filepath.Dir(sPath))
+			for _, legacyName := range []string{"DevApps", "DevApp"} {
+				legacyPath := filepath.Join(appDataRoot, legacyName, "settings.json")
+				if legacyRaw, lErr := os.ReadFile(legacyPath); lErr == nil {
+					raw = legacyRaw
+					err = nil
+					break
+				}
+			}
+			if err != nil {
 				return AppSettings{BaseDir: DefaultBaseDir, Language: "en"}, sPath, nil
 			}
 		}

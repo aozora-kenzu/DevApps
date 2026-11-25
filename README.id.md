@@ -1,18 +1,18 @@
-# DevApps
+# UniDevUI
 
 **Bahasa / Language:** [English](README.md) | [Bahasa Indonesia](README.id.md)
 
-**DevApps** adalah aplikasi utilitas desktop Windows portabel berbasis **Go + Wails v2 + Vanilla TypeScript** untuk menyiapkan runtime pemrograman secara rapi tanpa mengotori sistem operasi, sekaligus mengotomatiskan instalasi silent, pembaruan, dan penguncian versi (*pin*) aplikasi Windows melalui **Winget**.
+**UniDevUI** adalah aplikasi utilitas desktop Windows portabel berbasis **Go + Wails v2 + Vanilla TypeScript** untuk menyiapkan runtime pemrograman secara rapi tanpa mengotori sistem operasi, sekaligus mengotomatiskan instalasi silent, pembaruan, dan penguncian versi (*pin*) aplikasi Windows melalui **Winget**.
 
 ---
 
 ## Tampilan Aplikasi
 
 ### Portable Runtimes & Manajemen User PATH
-![DevApps Portable Runtimes](docs/screenshots/portable_runtimes.png)
+![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.png)
 
 ### Clean Install, Katalog Winget & Aplikasi Terpasang
-![DevApps Clean Install](docs/screenshots/clean_install.png)
+![UniDevUI Clean Install](docs/screenshots/clean_install.png)
 
 ---
 
@@ -37,7 +37,7 @@
 - **Menu `Installed & Updates` / `Terpasang & Update`:**
   Memindai semua aplikasi terpasang di PC lewat `winget list` dengan 3 filter cepat (**`Perlu Update`**, **`Semua Terpasang`**, **`Diabaikan`**), tombol **`Update`** per aplikasi, **`Update Semua`** secara berurutan, **`Abaikan`**, dan **`Pulihkan`**.
 - **Daftar Abaikan Portabel (`ignored_updates.conf`) + `winget pin` Windows:**
-  Aplikasi yang diabaikan akan disembunyikan dari daftar **`Perlu Update`** & **`Semua Terpasang`** (dan tidak memicu status update kuning di kartu Clean Install, sementara tombol **`Fix`** dan pemilihan versi seperti Laragon `6.0.0` tetap aktif), tersimpan di `ignored_updates.conf` di sebelah `DevApps.exe`, serta otomatis mengunci paket lewat `winget pin add --blocking` untuk ID Winget/MS Store.
+  Aplikasi yang diabaikan akan disembunyikan dari daftar **`Perlu Update`** & **`Semua Terpasang`** (dan tidak memicu status update kuning di kartu Clean Install, sementara tombol **`Fix`** dan pemilihan versi seperti Laragon `6.0.0` tetap aktif), tersimpan di `ignored_updates.conf` di sebelah `UniDevUI.exe`, serta otomatis mengunci paket lewat `winget pin add --blocking` untuk ID Winget/MS Store.
 - **Progress Bar Header Bersih & Antarmuka Dwibahasa:**
   Memanfaatkan Windows ConPTY (`CreatePseudoConsole`) agar persentase, jumlah MB, dan kecepatan download Winget tampil rapi di header tanpa membanjiri log terminal, serta mendukung ganti bahasa instan **Inggris (`en`)** dan **Indonesia (`id`)**.
 
@@ -45,15 +45,15 @@
 
 ## Lokasi Berkas Konfigurasi & Penyimpanan
 
-Berkas konfigurasi `.conf` disimpan secara portabel **di folder yang sama dengan `DevApps.exe`** dan dipantau otomatis bila diedit dari luar (misalnya dengan Notepad):
+Berkas konfigurasi `.conf` disimpan secara portabel **di folder yang sama dengan `UniDevUI.exe`** dan dipantau otomatis bila diedit dari luar (misalnya dengan Notepad):
 
 | Berkas | Lokasi | Fungsi |
 | :--- | :--- | :--- |
-| `packages.conf` | Di sebelah `DevApps.exe` | Daftar paket runtime portabel beserta versi dan URL unduhannya |
-| `essentials.conf` | Di sebelah `DevApps.exe` | Daftar aplikasi Clean Install kurasi (bisa ditambah lewat UI atau Notepad) |
-| `ignored_updates.conf` | Di sebelah `DevApps.exe` | Daftar aplikasi yang diabaikan dari update/daftar terpasang + status Winget Pin |
-| `settings.json` | `%APPDATA%\DevApps\` | Folder tujuan ekstraksi (`BaseDir`) dan bahasa antarmuka (`en`/`id`) |
-| `size_cache.json` | `%APPDATA%\DevApps\` | Cache ukuran file unduhan (`Content-Length`) |
+| `packages.conf` | Di sebelah `UniDevUI.exe` | Daftar paket runtime portabel beserta versi dan URL unduhannya |
+| `essentials.conf` | Di sebelah `UniDevUI.exe` | Daftar aplikasi Clean Install kurasi (bisa ditambah lewat UI atau Notepad) |
+| `ignored_updates.conf` | Di sebelah `UniDevUI.exe` | Daftar aplikasi yang diabaikan dari update/daftar terpasang + status Winget Pin |
+| `settings.json` | `%APPDATA%\UniDevUI\` | Folder tujuan ekstraksi (`BaseDir`) dan bahasa antarmuka (`en`/`id`) |
+| `size_cache.json` | `%APPDATA%\UniDevUI\` | Cache ukuran file unduhan (`Content-Length`) |
 
 ---
 
@@ -63,7 +63,7 @@ Berkas konfigurasi `.conf` disimpan secara portabel **di folder yang sama dengan
 - **Frontend:** Vanilla TypeScript (`^5.6.3`), Vite (`^7.0.0`)
 
 ```text
-DevApp/
+UniDevUI/
 ├── main.go                     # Entry point jendela desktop Wails & lifecycle
 ├── app.go                      # Binding backend, task runner, file watcher, dan orkestrasi state
 ├── wails.json                  # Konfigurasi build Wails
@@ -103,7 +103,7 @@ cd ..
 # Jalankan unit test cepat
 go test -v -short -count=1 ./...
 
-# Build aplikasi tunggal (.exe) siap pakai -> build/bin/DevApps.exe
+# Build aplikasi tunggal (.exe) siap pakai -> build/bin/UniDevUI.exe
 wails build -clean
 ```
 
@@ -111,7 +111,7 @@ wails build -clean
 
 ## Rilis Otomatis via GitHub Releases
 
-Setiap push tag versi (`v*`, misalnya `v1.0.0`) otomatis menjalankan workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) di runner `windows-latest` untuk menjalankan unit test, mem-build `DevApps.exe`, mengemas `DevApps-windows-amd64.zip`, dan menerbitkan GitHub Release secara otomatis.
+Setiap push tag versi (`v*`, misalnya `v1.0.0`) otomatis menjalankan workflow [`.github/workflows/release.yml`](.github/workflows/release.yml) di runner `windows-latest` untuk menjalankan unit test, mem-build `UniDevUI.exe`, mengemas `UniDevUI-windows-amd64.zip`, dan menerbitkan GitHub Release secara otomatis.
 
 ---
 

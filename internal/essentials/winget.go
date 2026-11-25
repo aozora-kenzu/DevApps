@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"DevApp/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/archive"
 )
 
 const wingetMsixBundleURL = "https://github.com/microsoft/winget-cli/releases/latest/download/Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle"
@@ -42,7 +42,7 @@ type WingetTableRow struct {
 	Source    string `json:"source,omitempty"`
 }
 
-// CheckEnvironment inspects whether winget.exe is available and whether DevApps is elevated (UAC Admin).
+// CheckEnvironment inspects whether winget.exe is available and whether UniDevUI is elevated (UAC Admin).
 func CheckEnvironment() EnvStatus {
 	st := EnvStatus{
 		IsAdmin: IsProcessElevated(),
@@ -66,7 +66,7 @@ func IsProcessElevated() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
 
-// RestartAsAdmin launches a new elevated DevApps instance via UAC "runas".
+// RestartAsAdmin launches a new elevated UniDevUI instance via UAC "runas".
 func RestartAsAdmin() error {
 	exe, err := os.Executable()
 	if err != nil {

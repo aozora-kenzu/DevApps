@@ -29,7 +29,7 @@ func ProbeURLSize(ctx context.Context, rawURL string) int64 {
 
 	// 1. Try fast HTTP HEAD.
 	if req, err := http.NewRequestWithContext(reqCtx, http.MethodHead, u, nil); err == nil {
-		req.Header.Set("User-Agent", "DevApps/1.0")
+		req.Header.Set("User-Agent", "UniDevUI/1.0")
 		if resp, err := sizeHTTPClient.Do(req); err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 && resp.ContentLength > 0 {
@@ -43,7 +43,7 @@ func ProbeURLSize(ctx context.Context, rawURL string) int64 {
 	if err != nil {
 		return 0
 	}
-	req.Header.Set("User-Agent", "DevApps/1.0")
+	req.Header.Set("User-Agent", "UniDevUI/1.0")
 	req.Header.Set("Range", "bytes=0-0")
 	resp, err := sizeHTTPClient.Do(req)
 	if err != nil {

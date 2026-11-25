@@ -1,4 +1,4 @@
-name: Build and Release DevApps
+name: Build and Release UniDevUI
 
 on:
   push:
@@ -55,27 +55,27 @@ jobs:
       - name: Run unit tests
         run: go test -v -short -count=1 ./...
 
-      - name: Build portable DevApps.exe
+      - name: Build portable UniDevUI.exe
         run: wails build -clean
 
       - name: Package portable release zip
         run: |
           $stage = Join-Path $env:RUNNER_TEMP "release_stage"
           New-Item -ItemType Directory -Path $stage -Force | Out-Null
-          Copy-Item build/bin/DevApps.exe (Join-Path $stage "DevApps.exe")
+          Copy-Item build/bin/UniDevUI.exe (Join-Path $stage "UniDevUI.exe")
           Copy-Item README.md (Join-Path $stage "README.md")
           Copy-Item README.id.md (Join-Path $stage "README.id.md")
           Copy-Item LICENSE (Join-Path $stage "LICENSE")
           Copy-Item LICENSE-ID.md (Join-Path $stage "LICENSE-ID.md")
-          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath DevApps-windows-amd64.zip -Force
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath UniDevUI-windows-amd64.zip -Force
 
       - name: Upload workflow build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: DevApps-windows-amd64
+          name: UniDevUI-windows-amd64
           path: |
-            build/bin/DevApps.exe
-            DevApps-windows-amd64.zip
+            build/bin/UniDevUI.exe
+            UniDevUI-windows-amd64.zip
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -83,5 +83,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            build/bin/DevApps.exe
-            DevApps-windows-amd64.zip
+            build/bin/UniDevUI.exe
+            UniDevUI-windows-amd64.zip

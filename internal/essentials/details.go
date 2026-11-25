@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"DevApp/internal/lts"
+	"github.com/aozora-kenzu/UniDevUI/internal/lts"
 )
 
 // PackageDetails holds rich metadata parsed from `winget show` plus a resolved Data-URI icon.
@@ -517,7 +517,7 @@ func downloadImageAsDataURI(ctx context.Context, rawURL string) string {
 	if err != nil {
 		return ""
 	}
-	req.Header.Set("User-Agent", "DevApps-Windows-Setup/1.0")
+	req.Header.Set("User-Agent", "UniDevUI-Windows-Setup/1.0")
 	resp, err := metadataHTTPClient.Do(req)
 	if err != nil {
 		return ""

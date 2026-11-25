@@ -22,7 +22,7 @@ type EssentialApp struct {
 	ExpectedSize int64    `json:"-"`
 }
 
-// ConfigPath returns essentials.conf inside appDir (alongside DevApps.exe).
+// ConfigPath returns essentials.conf inside appDir (alongside UniDevUI.exe).
 func ConfigPath(appDir string) string {
 	return filepath.Join(appDir, "essentials.conf")
 }
@@ -268,10 +268,10 @@ func sanitizeSectionID(wingetID string) string {
 // DefaultEssentialsConf returns the curated 27-app Windows clean-install list.
 func DefaultEssentialsConf() string {
 	return `# ==============================================================================
-# DevApps - Windows Clean Install Essentials (Winget)
+# UniDevUI - Windows Clean Install Essentials (Winget)
 # ==============================================================================
-# File ini tersimpan di folder tempat DevApps.exe berada.
-# Edit dengan Notepad, simpan, lalu klik "Reload" di DevApps.
+# File ini tersimpan di folder tempat UniDevUI.exe berada.
+# Edit dengan Notepad, simpan, lalu klik "Reload" di UniDevUI.
 #
 # Category yang tersedia: browsers | utilities | editors | office | chat | downloaders
 # ==============================================================================

@@ -21,7 +21,7 @@ type IgnoredApp struct {
 	Reason       string `json:"reason"`
 }
 
-// IgnoredConfigPath returns ignored_updates.conf inside appDir (alongside DevApps.exe).
+// IgnoredConfigPath returns ignored_updates.conf inside appDir (alongside UniDevUI.exe).
 func IgnoredConfigPath(appDir string) string {
 	return filepath.Join(appDir, "ignored_updates.conf")
 }
@@ -43,12 +43,12 @@ func EnsureIgnoredConfig(appDir string) (string, error) {
 // DefaultIgnoredConf returns the initial template for ignored_updates.conf.
 func DefaultIgnoredConf() string {
 	return `# ==============================================================================
-# DevApps - Ignored Apps & Pinned Versions (Clean Install / Updates)
+# UniDevUI - Ignored Apps & Pinned Versions (Clean Install / Updates)
 # ==============================================================================
-# File ini tersimpan di folder tempat DevApps.exe berada.
+# File ini tersimpan di folder tempat UniDevUI.exe berada.
 # Aplikasi di daftar ini disembunyikan dari daftar Update & Installed utama,
 # serta ikut di-pin di Winget Windows jika berasal dari source winget/msstore.
-# Edit dengan Notepad lalu klik Reload, atau kelola langsung lewat UI DevApps.
+# Edit dengan Notepad lalu klik Reload, atau kelola langsung lewat UI UniDevUI.
 # ==============================================================================
 `
 }

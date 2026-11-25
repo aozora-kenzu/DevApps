@@ -16,7 +16,7 @@ import (
 
 	"golang.org/x/sys/windows"
 
-	"DevApp/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/archive"
 )
 
 var (

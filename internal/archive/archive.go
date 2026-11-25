@@ -88,7 +88,7 @@ func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "DevApp/1.0 (Windows Portable Package Manager)")
+	req.Header.Set("User-Agent", "UniDevUI/1.0 (Windows Portable Package Manager)")
 
 	client := &http.Client{
 		Timeout: 0,

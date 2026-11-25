@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"DevApp/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/archive"
 )
 
 func TestDefaultEssentialsConfHasAll27Apps(t *testing.T) {

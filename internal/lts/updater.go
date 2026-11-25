@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"DevApp/internal/config"
+	"github.com/aozora-kenzu/UniDevUI/internal/config"
 )
 
 var sharedClient = &http.Client{Timeout: 20 * time.Second}
@@ -468,7 +468,7 @@ func getText(ctx context.Context, url string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "DevApp/1.0 (LTS Updater)")
+	req.Header.Set("User-Agent", "UniDevUI/1.0 (LTS Updater)")
 	resp, err := sharedClient.Do(req)
 	if err != nil {
 		return "", err

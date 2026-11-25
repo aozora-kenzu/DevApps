@@ -1770,7 +1770,7 @@ function render(skipScrollCapture = false): void {
         <header class="topbar">
             <div class="brand">
                 <div class="brand-mark">&gt;_</div>
-                <span class="brand-title">DevApps</span>
+                <span class="brand-title">UniDevUI</span>
                 <div class="mode-tabs">
                     <button class="mode-tab ${primaryTab === 'runtimes' ? 'active' : ''}" data-primary-tab="runtimes">${escapeHtml(t.tabRuntimes)}</button>
                     <button class="mode-tab ${primaryTab === 'essentials' ? 'active' : ''}" data-primary-tab="essentials">${escapeHtml(t.tabCleanInstall)}</button>

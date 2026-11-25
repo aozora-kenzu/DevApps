@@ -27,7 +27,7 @@ var (
 	procSendMsgTimeoutW = user32.NewProc("SendMessageTimeoutW")
 )
 
-// ConflictInfo describes an external executable found outside DevApp's active directory.
+// ConflictInfo describes an external executable found outside UniDevUI's active directory.
 type ConflictInfo struct {
 	Scope    string `json:"scope"`    // "System PATH" or "User PATH"
 	FullPath string `json:"fullPath"` // Full path to conflicting executable
@@ -87,7 +87,7 @@ func SetAppPath(baseDir, appID, newBinDir string) ([]string, error) {
 		updated = append(updated, entry)
 	}
 
-	// Prepend newly activated DevApp tool so it takes precedence over other User PATH entries.
+	// Prepend newly activated UniDevUI tool so it takes precedence over other User PATH entries.
 	if !replaced {
 		updated = append([]string{cleanNew}, updated...)
 	}

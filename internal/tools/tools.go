@@ -18,8 +18,8 @@ import (
 
 	"golang.org/x/sys/windows/registry"
 
-	"DevApp/internal/archive"
-	"DevApp/internal/pathmgr"
+	"github.com/aozora-kenzu/UniDevUI/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/pathmgr"
 )
 
 // ToolStatus represents the install state of a CLI or System SDK tool.
@@ -400,7 +400,7 @@ func fetchToolJSON(ctx context.Context, url string, dst any) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "DevApp/1.0 (Version Check)")
+	req.Header.Set("User-Agent", "UniDevUI/1.0 (Version Check)")
 	resp, err := toolHTTPClient.Do(req)
 	if err != nil {
 		return err

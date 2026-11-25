@@ -303,10 +303,10 @@ func isLikelyURL(s string) bool {
 // DefaultPackagesConf returns the initial Notepad-editable packages.conf template.
 func DefaultPackagesConf() string {
 	return `# ==============================================================================
-# DevApps - Portable Packages Configuration
+# UniDevUI - Portable Packages Configuration
 # ==============================================================================
-# File ini tersimpan di folder tempat DevApps.exe berada.
-# Edit file ini dengan Notepad, simpan, lalu klik tombol "Reload" di DevApps.
+# File ini tersimpan di folder tempat UniDevUI.exe berada.
+# Edit file ini dengan Notepad, simpan, lalu klik tombol "Reload" di UniDevUI.
 # Semua hasil ekstrak akan disatukan ke folder Output Path pilihan Anda (default: C:\AppPath\<app_id>\<version>\).
 #
 # Format setiap blok aplikasi:

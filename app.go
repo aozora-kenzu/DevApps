@@ -14,12 +14,12 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
-	"DevApp/internal/archive"
-	"DevApp/internal/config"
-	"DevApp/internal/essentials"
-	"DevApp/internal/lts"
-	"DevApp/internal/pathmgr"
-	"DevApp/internal/tools"
+	"github.com/aozora-kenzu/UniDevUI/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/config"
+	"github.com/aozora-kenzu/UniDevUI/internal/essentials"
+	"github.com/aozora-kenzu/UniDevUI/internal/lts"
+	"github.com/aozora-kenzu/UniDevUI/internal/pathmgr"
+	"github.com/aozora-kenzu/UniDevUI/internal/tools"
 )
 
 // VersionView describes one package version plus local install and PATH status.
@@ -168,7 +168,7 @@ type App struct {
 	sizeCachePath string
 }
 
-// NewApp creates a new App instance. Config files live in AppDir (beside DevApps.exe);
+// NewApp creates a new App instance. Config files live in AppDir (beside UniDevUI.exe);
 // extraction output defaults to C:\AppPath or persisted settings.
 func NewApp() *App {
 	settings, _, _ := config.LoadSettings()
@@ -227,8 +227,8 @@ func (a *App) startup(ctx context.Context) {
 		a.emitBiLog("ERROR", ignErr.Error(), ignErr.Error())
 	} else {
 		a.emitBiLog("INFO",
-			fmt.Sprintf("DevApps ready. App dir: %s | Output path: %s", a.appDir, baseDir),
-			fmt.Sprintf("DevApps siap. Folder aplikasi: %s | Output path: %s", a.appDir, baseDir),
+			fmt.Sprintf("UniDevUI ready. App dir: %s | Output path: %s", a.appDir, baseDir),
+			fmt.Sprintf("UniDevUI siap. Folder aplikasi: %s | Output path: %s", a.appDir, baseDir),
 		)
 	}
 	a.startConfigWatcher(pkgConf, essConf, ignConf)
@@ -779,7 +779,7 @@ func (a *App) refreshWingetCache(ctx context.Context) {
 	}
 
 	// For apps detected via Windows Registry / display name (where Winget ARP ID differs or was ahead of repo),
-	// fetch live latest repo versions via `winget show` so DevApps shows accurate Up-to-date / Ahead / Update comparison.
+	// fetch live latest repo versions via `winget show` so UniDevUI shows accurate Up-to-date / Ahead / Update comparison.
 	repoVers := make(map[string]string)
 	if env.WingetAvailable {
 		if essConfPath, err := essentials.EnsureConfig(a.appDir); err == nil {
@@ -853,10 +853,10 @@ func (a *App) RefreshWingetStatus() (DashboardState, error) {
 	return st, nil
 }
 
-// RestartAsAdmin prompts UAC elevation and launches DevApps.exe as Administrator, closing the standard instance.
+// RestartAsAdmin prompts UAC elevation and launches UniDevUI.exe as Administrator, closing the standard instance.
 func (a *App) RestartAsAdmin() error {
 	if essentials.IsProcessElevated() {
-		a.emitBiLog("INFO", "DevApps is already running as Administrator.", "DevApps sudah berjalan sebagai Administrator.")
+		a.emitBiLog("INFO", "UniDevUI is already running as Administrator.", "UniDevUI sudah berjalan sebagai Administrator.")
 		return nil
 	}
 	if err := essentials.RestartAsAdmin(); err != nil {
@@ -1288,7 +1288,7 @@ func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardStat
 		display = trimmedID
 	}
 	if strings.TrimSpace(reason) == "" {
-		reason = "Ignored via DevApps"
+		reason = "Ignored via UniDevUI"
 	}
 
 	pinned := false
@@ -1319,8 +1319,8 @@ func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardStat
 
 	if pinned {
 		a.emitBiLog("OK",
-			fmt.Sprintf("Ignored %s (%s) in DevApps & pinned blocking in Windows Winget.", display, trimmedID),
-			fmt.Sprintf("Mengabaikan %s (%s) di DevApps & mengunci pin Winget di Windows.", display, trimmedID),
+			fmt.Sprintf("Ignored %s (%s) in UniDevUI & pinned blocking in Windows Winget.", display, trimmedID),
+			fmt.Sprintf("Mengabaikan %s (%s) di UniDevUI & mengunci pin Winget di Windows.", display, trimmedID),
 		)
 	} else {
 		a.emitBiLog("OK",
@@ -1440,7 +1440,7 @@ func (a *App) openInNotepad(confPath string) error {
 	return nil
 }
 
-// OpenEssentialsConf launches Notepad to edit essentials.conf next to DevApps.exe.
+// OpenEssentialsConf launches Notepad to edit essentials.conf next to UniDevUI.exe.
 func (a *App) OpenEssentialsConf() error {
 	confPath, err := essentials.EnsureConfig(a.appDir)
 	if err != nil {
@@ -1449,7 +1449,7 @@ func (a *App) OpenEssentialsConf() error {
 	return a.openInNotepad(confPath)
 }
 
-// OpenIgnoredConf launches Notepad to edit ignored_updates.conf next to DevApps.exe.
+// OpenIgnoredConf launches Notepad to edit ignored_updates.conf next to UniDevUI.exe.
 func (a *App) OpenIgnoredConf() error {
 	confPath, err := essentials.EnsureIgnoredConfig(a.appDir)
 	if err != nil {
@@ -1503,7 +1503,7 @@ func populateVersionComparison(ctx context.Context, baseDir string, views []Pack
 					pv.WinActivePath = fullPath
 					appPrefix := strings.ToLower(filepath.Clean(filepath.Join(baseDir, pv.ID))) + `\`
 					if strings.HasPrefix(strings.ToLower(filepath.Clean(fullPath)), appPrefix) {
-						pv.WinActiveScope = "DevApps (User PATH)"
+						pv.WinActiveScope = "UniDevUI (User PATH)"
 						if pv.ActiveVer != "" {
 							pv.WinActiveVer = pv.ActiveVer
 						} else {
@@ -1585,9 +1585,9 @@ func versionBranchPrefix(appID, ver string) string {
 
 // PickOutputDirectory opens a native Windows folder selection dialog.
 func (a *App) PickOutputDirectory() (string, error) {
-	title := "Select DevApps Extraction Output Directory"
+	title := "Select UniDevUI Extraction Output Directory"
 	if a.getLanguage() == "id" {
-		title = "Pilih Folder Output Ekstraksi DevApps"
+		title = "Pilih Folder Output Ekstraksi UniDevUI"
 	}
 	selected, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
 		Title:            title,
@@ -1600,7 +1600,7 @@ func (a *App) PickOutputDirectory() (string, error) {
 }
 
 // SetOutputDir changes the archive extraction directory, persists it, and refreshes state.
-// Note: packages.conf and essentials.conf always remain beside DevApps.exe.
+// Note: packages.conf and essentials.conf always remain beside UniDevUI.exe.
 func (a *App) SetOutputDir(newDir string) (DashboardState, error) {
 	a.taskMu.Lock()
 	isBusy := a.busy
@@ -1716,7 +1716,7 @@ func (a *App) AddCustomDirToPath(dir string) (DashboardState, error) {
 	return a.GetDashboardState()
 }
 
-// OpenPackagesConf launches Notepad to edit packages.conf next to DevApps.exe.
+// OpenPackagesConf launches Notepad to edit packages.conf next to UniDevUI.exe.
 func (a *App) OpenPackagesConf() error {
 	confPath, err := config.EnsureConfig(a.appDir)
 	if err != nil {

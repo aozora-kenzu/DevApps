@@ -1,18 +1,18 @@
-# DevApps
+# UniDevUI
 
 **Language / Bahasa:** [English](README.md) | [Bahasa Indonesia](README.id.md)
 
-**DevApps** is a portable Windows desktop utility built with **Go + Wails v2 + Vanilla TypeScript** for setting up developer runtimes cleanly without polluting the OS, and automating silent Windows application installs, updates, and version pins via **Winget**.
+**UniDevUI** is a portable Windows desktop utility built with **Go + Wails v2 + Vanilla TypeScript** for setting up developer runtimes cleanly without polluting the OS, and automating silent Windows application installs, updates, and version pins via **Winget**.
 
 ---
 
 ## Screenshots
 
 ### Portable Runtimes & User PATH Management
-![DevApps Portable Runtimes](docs/screenshots/portable_runtimes.png)
+![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.png)
 
 ### Clean Install, Winget Catalog & Installed Updates
-![DevApps Clean Install](docs/screenshots/clean_install.png)
+![UniDevUI Clean Install](docs/screenshots/clean_install.png)
 
 ---
 
@@ -37,7 +37,7 @@
 - **Installed & Updates Manager:**
   Scans installed Windows apps via `winget list` with three quick filters (`Updates Available`, `All Installed`, `Ignored`), per-app **`Update`**, sequential **`Update All`**, **`Ignore`**, and **`Restore`**.
 - **Portable `ignored_updates.conf` + Windows `winget pin`:**
-  Ignoring an app hides it from `Updates Available` / `All Installed` (and suppresses update prompts on curated cards while keeping `Fix`/version reinstall working), writes to `ignored_updates.conf` beside `DevApps.exe`, and automatically sets a blocking pin via `winget pin add --blocking` for Winget/MS Store IDs.
+  Ignoring an app hides it from `Updates Available` / `All Installed` (and suppresses update prompts on curated cards while keeping `Fix`/version reinstall working), writes to `ignored_updates.conf` beside `UniDevUI.exe`, and automatically sets a blocking pin via `winget pin add --blocking` for Winget/MS Store IDs.
 - **Clean Header Progress & Bilingual UI:**
   Uses Windows ConPTY (`CreatePseudoConsole`) so Winget download percentages, bytes downloaded, and speed render smoothly in the top header progress bar, with instant **English (`en`)** and **Indonesian (`id`)** switching.
 
@@ -45,15 +45,15 @@
 
 ## Configuration & Storage Locations
 
-Configuration files are stored portably **next to `DevApps.exe`** and watched for live external edits:
+Configuration files are stored portably **next to `UniDevUI.exe`** and watched for live external edits:
 
 | File | Location | Purpose |
 | :--- | :--- | :--- |
-| `packages.conf` | Next to `DevApps.exe` | Portable runtime packages and downloadable versions/URLs |
-| `essentials.conf` | Next to `DevApps.exe` | Curated Clean Install app list (customizable via UI or Notepad) |
-| `ignored_updates.conf` | Next to `DevApps.exe` | Ignored apps excluded from updates/installed lists + Winget pin state |
-| `settings.json` | `%APPDATA%\DevApps\` | Active extraction output folder (`BaseDir`) and UI language (`en`/`id`) |
-| `size_cache.json` | `%APPDATA%\DevApps\` | Cached installer/archive file sizes (`Content-Length`) |
+| `packages.conf` | Next to `UniDevUI.exe` | Portable runtime packages and downloadable versions/URLs |
+| `essentials.conf` | Next to `UniDevUI.exe` | Curated Clean Install app list (customizable via UI or Notepad) |
+| `ignored_updates.conf` | Next to `UniDevUI.exe` | Ignored apps excluded from updates/installed lists + Winget pin state |
+| `settings.json` | `%APPDATA%\UniDevUI\` | Active extraction output folder (`BaseDir`) and UI language (`en`/`id`) |
+| `size_cache.json` | `%APPDATA%\UniDevUI\` | Cached installer/archive file sizes (`Content-Length`) |
 
 ---
 
@@ -63,7 +63,7 @@ Configuration files are stored portably **next to `DevApps.exe`** and watched fo
 - **Frontend:** Vanilla TypeScript (`^5.6.3`), Vite (`^7.0.0`)
 
 ```text
-DevApp/
+UniDevUI/
 ├── main.go                     # Wails desktop window & lifecycle entry point
 ├── app.go                      # Backend bindings, task runner, watchers, and state orchestration
 ├── wails.json                  # Wails build configuration
@@ -103,7 +103,7 @@ cd ..
 # Run unit tests (fast offline/local checks)
 go test -v -short -count=1 ./...
 
-# Build standalone portable executable -> build/bin/DevApps.exe
+# Build standalone portable executable -> build/bin/UniDevUI.exe
 wails build -clean
 ```
 
@@ -111,7 +111,7 @@ wails build -clean
 
 ## Automated GitHub Releases
 
-Pushing a version tag (`v*`, for example `v1.0.0`) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml) on `windows-latest` to run tests, build `DevApps.exe`, package `DevApps-windows-amd64.zip`, and publish a GitHub Release automatically.
+Pushing a version tag (`v*`, for example `v1.0.0`) triggers [`.github/workflows/release.yml`](.github/workflows/release.yml) on `windows-latest` to run tests, build `UniDevUI.exe`, package `UniDevUI-windows-amd64.zip`, and publish a GitHub Release automatically.
 
 ---
 

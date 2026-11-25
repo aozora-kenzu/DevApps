@@ -1,4 +1,4 @@
-module DevApp
+module github.com/aozora-kenzu/UniDevUI
 
 go 1.26.0
 
