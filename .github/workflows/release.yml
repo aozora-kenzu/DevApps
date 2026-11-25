@@ -39,14 +39,16 @@ jobs:
           $goBin = Join-Path (go env GOPATH) "bin"
           Add-Content -Path $env:GITHUB_PATH -Value $goBin
 
-      - name: Install frontend dependencies
+      - name: Install frontend dependencies & build initial assets
         working-directory: frontend
-        run: npm ci
+        run: |
+          npm ci
+          npm run build
 
       - name: Generate Wails bindings
         run: wails generate module
 
-      - name: Build frontend assets
+      - name: Rebuild frontend assets after binding generation
         working-directory: frontend
         run: npm run build
 
