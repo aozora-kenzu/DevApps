@@ -13,7 +13,9 @@ jobs:
   release-windows:
     name: Build Windows (amd64)
     runs-on: windows-latest
-    shell: pwsh
+    defaults:
+      run:
+        shell: pwsh
 
     steps:
       - name: Checkout repository
@@ -34,16 +36,19 @@ jobs:
       - name: Install Wails CLI v2
         run: |
           go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
-          "$(go env GOPATH)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $goBin = Join-Path (go env GOPATH) "bin"
+          Add-Content -Path $env:GITHUB_PATH -Value $goBin
 
-      - name: Install frontend dependencies & build assets
+      - name: Install frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
       - name: Generate Wails bindings
         run: wails generate module
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
 
       - name: Run unit tests
         run: go test -v -short -count=1 ./...
@@ -53,13 +58,14 @@ jobs:
 
       - name: Package portable release zip
         run: |
-          New-Item -ItemType Directory -Path release_stage -Force | Out-Null
-          Copy-Item build/bin/DevApps.exe release_stage/DevApps.exe
-          Copy-Item README.md release_stage/README.md
-          Copy-Item README.id.md release_stage/README.id.md
-          Copy-Item LICENSE release_stage/LICENSE
-          Copy-Item LICENSE-ID.md release_stage/LICENSE-ID.md
-          Compress-Archive -Path release_stage/* -DestinationPath DevApps-windows-amd64.zip -Force
+          $stage = Join-Path $env:RUNNER_TEMP "release_stage"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item build/bin/DevApps.exe (Join-Path $stage "DevApps.exe")
+          Copy-Item README.md (Join-Path $stage "README.md")
+          Copy-Item README.id.md (Join-Path $stage "README.id.md")
+          Copy-Item LICENSE (Join-Path $stage "LICENSE")
+          Copy-Item LICENSE-ID.md (Join-Path $stage "LICENSE-ID.md")
+          Compress-Archive -Path (Join-Path $stage "*") -DestinationPath DevApps-windows-amd64.zip -Force
 
       - name: Upload workflow build artifacts
         uses: actions/upload-artifact@v4
