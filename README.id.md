@@ -6,6 +6,16 @@
 
 ---
 
+## Tampilan Aplikasi
+
+### Portable Runtimes & Manajemen User PATH
+![DevApps Portable Runtimes](docs/screenshots/portable_runtimes.png)
+
+### Clean Install, Katalog Winget & Aplikasi Terpasang
+![DevApps Clean Install](docs/screenshots/clean_install.png)
+
+---
+
 ## Fitur Utama
 
 ### 1. Portable Runtimes & CLI / SDK Tools (`Portable Runtimes`)
