@@ -1,0 +1,9 @@
+build/bin
+node_modules
+frontend/dist
+*.exe
+packages.conf
+essentials.conf
+ignored_updates.conf
+settings.json
+size_cache.json
