@@ -9,10 +9,13 @@
 ## Tampilan Aplikasi
 
 ### Portable Runtimes & Manajemen User PATH
-![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.png)
+![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.jpg)
 
-### Clean Install, Katalog Winget & Aplikasi Terpasang
-![UniDevUI Clean Install](docs/screenshots/clean_install.png)
+### Katalog Windows Apps (`Windows Apps`)
+![UniDevUI Windows Apps](docs/screenshots/windows_apps.jpg)
+
+### Aplikasi Terpasang, Update Sistem & Progress ConPTY
+![UniDevUI Installed Apps and Updates](docs/screenshots/installed_updates.jpg)
 
 ---
 
@@ -30,14 +33,14 @@
 - **Cek Rilis Resmi & Ukuran File:**
   Perbarui link versi LTS/stabil terbaru langsung dari sumber resmi (`Check Updates`), lihat estimasi ukuran unduhan yang tersimpan di cache lokal, dan pantau progress unduhan langsung pada header terminal.
 
-### 2. Clean Install, Katalog Winget & Update Aplikasi (`Clean Install`)
+### 2. Windows Apps, Katalog Winget & Update Aplikasi (`Windows Apps`)
 - **27 Aplikasi Esensial Kurasi** dalam 6 kategori (`browsers`, `utilities`, `editors`, `office`, `chat`, `downloaders`), termasuk pilihan multi-versi seperti **Laragon** (`6.0.0` tanpa popup lisensi atau `latest`).
 - **Deteksi Cerdas di Windows:** Mencocokkan aplikasi yang sudah terpasang lewat `winget list` maupun Registry Uninstall Windows.
 - **Pencarian Katalog Winget & Modal Detail:** Cari aplikasi apa pun dari repositori `winget` dan `msstore`, lihat penerbit, situs resmi, lisensi, tipe installer, tanggal rilis, SHA256, ukuran installer, dan ikon, lalu install silent atau tambahkan ke daftar (`+ Add to List`).
 - **Menu `Installed & Updates` / `Terpasang & Update`:**
   Memindai semua aplikasi terpasang di PC lewat `winget list` dengan 3 filter cepat (**`Perlu Update`**, **`Semua Terpasang`**, **`Diabaikan`**), tombol **`Update`** per aplikasi, **`Update Semua`** secara berurutan, **`Abaikan`**, dan **`Pulihkan`**.
 - **Daftar Abaikan Portabel (`ignored_updates.conf`) + `winget pin` Windows:**
-  Aplikasi yang diabaikan akan disembunyikan dari daftar **`Perlu Update`** & **`Semua Terpasang`** (dan tidak memicu status update kuning di kartu Clean Install, sementara tombol **`Fix`** dan pemilihan versi seperti Laragon `6.0.0` tetap aktif), tersimpan di `ignored_updates.conf` di sebelah `UniDevUI.exe`, serta otomatis mengunci paket lewat `winget pin add --blocking` untuk ID Winget/MS Store.
+  Aplikasi yang diabaikan akan disembunyikan dari daftar **`Perlu Update`** & **`Semua Terpasang`** (dan tidak memicu status update kuning di kartu Windows Apps, sementara tombol **`Fix`** dan pemilihan versi seperti Laragon `6.0.0` tetap aktif), tersimpan di `ignored_updates.conf` di sebelah `UniDevUI.exe`, serta otomatis mengunci paket lewat `winget pin add --blocking` untuk ID Winget/MS Store.
 - **Progress Bar Header Bersih & Antarmuka Dwibahasa:**
   Memanfaatkan Windows ConPTY (`CreatePseudoConsole`) agar persentase, jumlah MB, dan kecepatan download Winget tampil rapi di header tanpa membanjiri log terminal, serta mendukung ganti bahasa instan **Inggris (`en`)** dan **Indonesia (`id`)**.
 
@@ -50,7 +53,7 @@ Berkas konfigurasi `.conf` disimpan secara portabel **di folder yang sama dengan
 | Berkas | Lokasi | Fungsi |
 | :--- | :--- | :--- |
 | `packages.conf` | Di sebelah `UniDevUI.exe` | Daftar paket runtime portabel beserta versi dan URL unduhannya |
-| `essentials.conf` | Di sebelah `UniDevUI.exe` | Daftar aplikasi Clean Install kurasi (bisa ditambah lewat UI atau Notepad) |
+| `essentials.conf` | Di sebelah `UniDevUI.exe` | Daftar aplikasi Windows Apps kurasi (bisa ditambah lewat UI atau Notepad) |
 | `ignored_updates.conf` | Di sebelah `UniDevUI.exe` | Daftar aplikasi yang diabaikan dari update/daftar terpasang + status Winget Pin |
 | `settings.json` | `%APPDATA%\UniDevUI\` | Folder tujuan ekstraksi (`BaseDir`) dan bahasa antarmuka (`en`/`id`) |
 | `size_cache.json` | `%APPDATA%\UniDevUI\` | Cache ukuran file unduhan (`Content-Length`) |

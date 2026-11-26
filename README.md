@@ -9,10 +9,13 @@
 ## Screenshots
 
 ### Portable Runtimes & User PATH Management
-![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.png)
+![UniDevUI Portable Runtimes](docs/screenshots/portable_runtimes.jpg)
 
-### Clean Install, Winget Catalog & Installed Updates
-![UniDevUI Clean Install](docs/screenshots/clean_install.png)
+### Windows Apps Catalog (`Windows Apps`)
+![UniDevUI Windows Apps](docs/screenshots/windows_apps.jpg)
+
+### Installed Apps, System Updates & ConPTY Progress
+![UniDevUI Installed Apps and Updates](docs/screenshots/installed_updates.jpg)
 
 ---
 
@@ -30,7 +33,7 @@
 - **Live Upstream Checks & Download Sizes:**
   Check latest stable/LTS releases directly from upstream providers (`Check Updates`), inspect download sizes cached locally, and watch live header download progress bars.
 
-### 2. Clean Install, Winget Catalog & System Updates (`Clean Install`)
+### 2. Windows Apps, Winget Catalog & System Updates (`Windows Apps`)
 - **27 Curated Essential Apps** across 6 categories (`browsers`, `utilities`, `editors`, `office`, `chat`, `downloaders`), including multi-version options such as **Laragon** (`6.0.0` without license popup or `latest`).
 - **Smart Local Detection:** Matches already-installed Windows apps across both `winget list` and Windows Uninstall Registry entries (handling browser/editor ID mismatches cleanly).
 - **Winget Catalog Search & Details Modal:** Search any package across `winget` and `msstore`, preview publisher, homepage, license, installer type, release date, SHA256, file size, and icon, silent-install on demand, or pin to `essentials.conf` (`+ Add to List`).
@@ -50,7 +53,7 @@ Configuration files are stored portably **next to `UniDevUI.exe`** and watched f
 | File | Location | Purpose |
 | :--- | :--- | :--- |
 | `packages.conf` | Next to `UniDevUI.exe` | Portable runtime packages and downloadable versions/URLs |
-| `essentials.conf` | Next to `UniDevUI.exe` | Curated Clean Install app list (customizable via UI or Notepad) |
+| `essentials.conf` | Next to `UniDevUI.exe` | Curated Windows Apps list (customizable via UI or Notepad) |
 | `ignored_updates.conf` | Next to `UniDevUI.exe` | Ignored apps excluded from updates/installed lists + Winget pin state |
 | `settings.json` | `%APPDATA%\UniDevUI\` | Active extraction output folder (`BaseDir`) and UI language (`en`/`id`) |
 | `size_cache.json` | `%APPDATA%\UniDevUI\` | Cached installer/archive file sizes (`Content-Length`) |
@@ -86,7 +89,7 @@ UniDevUI/
 2. **Node.js** & **npm**
 3. **Wails CLI v2** (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1`)
 4. **Microsoft Edge WebView2 Runtime** (pre-installed on Windows 11)
-5. *(Optional runtime feature)* **Windows App Installer (`winget`)** for Clean Install & system update features
+5. *(Optional runtime feature)* **Windows App Installer (`winget`)** for Windows Apps & system update features
 
 ### Commands
 
