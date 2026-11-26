@@ -265,10 +265,10 @@ func sanitizeSectionID(wingetID string) string {
 	return cleaned
 }
 
-// DefaultEssentialsConf returns the curated 27-app Windows clean-install list.
+// DefaultEssentialsConf returns the curated 27-app Windows Apps list.
 func DefaultEssentialsConf() string {
 	return `# ==============================================================================
-# UniDevUI - Windows Clean Install Essentials (Winget)
+# UniDevUI - Windows Apps Essentials (Winget)
 # ==============================================================================
 # File ini tersimpan di folder tempat UniDevUI.exe berada.
 # Edit dengan Notepad, simpan, lalu klik "Reload" di UniDevUI.

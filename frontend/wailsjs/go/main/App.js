@@ -14,6 +14,10 @@ export function CancelActiveTask() {
   return window['go']['main']['App']['CancelActiveTask']();
 }
 
+export function CleanInvalidUserPath() {
+  return window['go']['main']['App']['CleanInvalidUserPath']();
+}
+
 export function DeleteInstalledVersion(arg1, arg2) {
   return window['go']['main']['App']['DeleteInstalledVersion'](arg1, arg2);
 }
@@ -54,6 +58,10 @@ export function InstallWingetCLI() {
   return window['go']['main']['App']['InstallWingetCLI']();
 }
 
+export function MoveUserPathEntry(arg1, arg2) {
+  return window['go']['main']['App']['MoveUserPathEntry'](arg1, arg2);
+}
+
 export function OpenAppPathFolder() {
   return window['go']['main']['App']['OpenAppPathFolder']();
 }
@@ -74,12 +82,24 @@ export function OpenPackagesConf() {
   return window['go']['main']['App']['OpenPackagesConf']();
 }
 
+export function OpenUserPathDir(arg1) {
+  return window['go']['main']['App']['OpenUserPathDir'](arg1);
+}
+
+export function PickAndAddUserPathDir() {
+  return window['go']['main']['App']['PickAndAddUserPathDir']();
+}
+
 export function PickOutputDirectory() {
   return window['go']['main']['App']['PickOutputDirectory']();
 }
 
 export function PinWingetApp(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PinWingetApp'](arg1, arg2, arg3, arg4);
+}
+
+export function RefreshUserPath() {
+  return window['go']['main']['App']['RefreshUserPath']();
 }
 
 export function RefreshWingetStatus() {
@@ -92,6 +112,10 @@ export function ReloadConfig() {
 
 export function RemoveFromPath(arg1) {
   return window['go']['main']['App']['RemoveFromPath'](arg1);
+}
+
+export function RemoveUserPathEntry(arg1, arg2) {
+  return window['go']['main']['App']['RemoveUserPathEntry'](arg1, arg2);
 }
 
 export function RestartAsAdmin() {

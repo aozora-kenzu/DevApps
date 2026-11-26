@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
+
+	"github.com/aozora-kenzu/UniDevUI/internal/pathmgr"
 )
 
 // RegistryAppEntry represents an installed Windows desktop program discovered in Uninstall registry keys.
@@ -313,4 +315,45 @@ func DescribeDetectionSource(via string) string {
 	default:
 		return "Winget"
 	}
+}
+
+// AnnotateSearchRowsInstalled enriches `winget search` rows with local Windows install/update detection
+// using exact Winget IDs, Uninstall Registry display names, and `winget list` rows.
+func AnnotateSearchRowsInstalled(
+	rows []WingetTableRow,
+	byID map[string]WingetTableRow,
+	regApps []RegistryAppEntry,
+	wingetRows []WingetTableRow,
+	ignoredMap map[string]IgnoredApp,
+) []WingetTableRow {
+	out := make([]WingetTableRow, len(rows))
+	for i, r := range rows {
+		probe := EssentialApp{
+			ID:       r.ID,
+			Name:     r.Name,
+			WingetID: r.ID,
+			Source:   r.Source,
+		}
+		match := MatchInstalledEssential(probe, byID, regApps, wingetRows)
+		if match.Installed {
+			r.Installed = true
+			r.InstalledVer = match.InstalledVer
+			r.MatchedBy = DescribeDetectionSource(match.MatchedVia)
+
+			_, isIgnored := ignoredMap[strings.ToLower(strings.TrimSpace(r.ID))]
+			if !isIgnored {
+				if avail := strings.TrimSpace(match.AvailableVer); avail != "" {
+					r.Available = avail
+					r.HasUpdate = true
+				} else if !match.ExactWinget && match.InstalledVer != "" && strings.TrimSpace(r.Version) != "" {
+					if pathmgr.CompareSemver(match.InstalledVer, r.Version) < 0 {
+						r.Available = strings.TrimSpace(r.Version)
+						r.HasUpdate = true
+					}
+				}
+			}
+		}
+		out[i] = r
+	}
+	return out
 }

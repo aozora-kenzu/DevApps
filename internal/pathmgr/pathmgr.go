@@ -33,6 +33,16 @@ type ConflictInfo struct {
 	FullPath string `json:"fullPath"` // Full path to conflicting executable
 }
 
+// UserPathEntry describes a single entry inside HKCU\Environment\Path.
+type UserPathEntry struct {
+	Index     int    `json:"index"`
+	Path      string `json:"path"`
+	Expanded  string `json:"expanded"`
+	Exists    bool   `json:"exists"`
+	Managed   bool   `json:"managed"`
+	Duplicate bool   `json:"duplicate"`
+}
+
 // GetUserPathEntries reads the raw User PATH from HKCU\Environment without expanding variables.
 func GetUserPathEntries() ([]string, uint32, error) {
 	key, err := registry.OpenKey(registry.CURRENT_USER, userEnvSubkey, registry.QUERY_VALUE)
@@ -154,6 +164,179 @@ func AddDirToUserPath(dir string) (bool, error) {
 	}
 	BroadcastEnvironmentChange()
 	return true, nil
+}
+
+// ExpandPathEntry resolves Windows %VAR% references in a User PATH entry.
+func ExpandPathEntry(raw string) string {
+	trimmed := strings.TrimSpace(strings.Trim(raw, `"`))
+	if trimmed == "" {
+		return ""
+	}
+	if expanded, err := registry.ExpandString(trimmed); err == nil && strings.TrimSpace(expanded) != "" {
+		return normalizePath(expanded)
+	}
+	return normalizePath(os.ExpandEnv(trimmed))
+}
+
+// InspectUserPathEntries returns detailed status for every directory in HKCU\Environment\Path.
+func InspectUserPathEntries(baseDir string) ([]UserPathEntry, error) {
+	entries, _, err := GetUserPathEntries()
+	if err != nil {
+		return nil, err
+	}
+	baseNorm := normalizePath(baseDir)
+	basePrefix := strings.ToLower(baseNorm) + `\`
+	seen := make(map[string]bool, len(entries))
+	out := make([]UserPathEntry, 0, len(entries))
+
+	for idx, raw := range entries {
+		expanded := ExpandPathEntry(raw)
+		normKey := strings.ToLower(expanded)
+		if normKey == "" {
+			normKey = strings.ToLower(normalizePath(raw))
+		}
+		dup := normKey != "" && seen[normKey]
+		if normKey != "" {
+			seen[normKey] = true
+		}
+		managed := baseNorm != "" && (strings.EqualFold(expanded, baseNorm) || strings.HasPrefix(strings.ToLower(expanded), basePrefix))
+		out = append(out, UserPathEntry{
+			Index:     idx,
+			Path:      raw,
+			Expanded:  expanded,
+			Exists:    dirExists(expanded),
+			Managed:   managed,
+			Duplicate: dup,
+		})
+	}
+	return out, nil
+}
+
+// MoveUserPathEntry moves an entry up (delta < 0) or down (delta > 0) in HKCU\Environment\Path.
+func MoveUserPathEntry(index, delta int) ([]string, error) {
+	entries, valType, err := GetUserPathEntries()
+	if err != nil {
+		return nil, err
+	}
+	updated, moved, err := swapPathEntries(entries, index, delta)
+	if err != nil {
+		return nil, err
+	}
+	if !moved {
+		return entries, nil
+	}
+	if err := writeUserPath(updated, valType); err != nil {
+		return nil, err
+	}
+	BroadcastEnvironmentChange()
+	return updated, nil
+}
+
+// RemoveUserPathEntry removes the entry matching index/expectedPath from HKCU\Environment\Path.
+func RemoveUserPathEntry(index int, expectedPath string) ([]string, error) {
+	entries, valType, err := GetUserPathEntries()
+	if err != nil {
+		return nil, err
+	}
+	updated, removed := removePathEntry(entries, index, expectedPath)
+	if !removed {
+		return nil, fmt.Errorf("User PATH entry not found: %s", expectedPath)
+	}
+	if err := writeUserPath(updated, valType); err != nil {
+		return nil, err
+	}
+	BroadcastEnvironmentChange()
+	return updated, nil
+}
+
+// CleanUserPathEntries removes duplicate or non-existent directory entries from HKCU\Environment\Path.
+func CleanUserPathEntries() ([]string, []string, error) {
+	entries, valType, err := GetUserPathEntries()
+	if err != nil {
+		return nil, nil, err
+	}
+	kept, removed := filterCleanPathEntries(entries, func(raw string) bool {
+		return dirExists(ExpandPathEntry(raw))
+	})
+	if len(removed) == 0 {
+		return nil, entries, nil
+	}
+	if err := writeUserPath(kept, valType); err != nil {
+		return nil, nil, err
+	}
+	BroadcastEnvironmentChange()
+	return removed, kept, nil
+}
+
+func swapPathEntries(entries []string, index, delta int) ([]string, bool, error) {
+	if delta == 0 {
+		return entries, false, nil
+	}
+	if index < 0 || index >= len(entries) {
+		return nil, false, fmt.Errorf("invalid PATH index %d", index)
+	}
+	step := -1
+	if delta > 0 {
+		step = 1
+	}
+	target := index + step
+	if target < 0 || target >= len(entries) {
+		return entries, false, nil
+	}
+	out := append([]string(nil), entries...)
+	out[index], out[target] = out[target], out[index]
+	return out, true, nil
+}
+
+func removePathEntry(entries []string, index int, expectedPath string) ([]string, bool) {
+	targetIdx := -1
+	expNorm := normalizePath(expectedPath)
+	if index >= 0 && index < len(entries) {
+		if expNorm == "" || strings.EqualFold(normalizePath(entries[index]), expNorm) {
+			targetIdx = index
+		}
+	}
+	if targetIdx < 0 && expNorm != "" {
+		for i, item := range entries {
+			if strings.EqualFold(normalizePath(item), expNorm) {
+				targetIdx = i
+				break
+			}
+		}
+	}
+	if targetIdx < 0 {
+		return entries, false
+	}
+	out := make([]string, 0, len(entries)-1)
+	out = append(out, entries[:targetIdx]...)
+	out = append(out, entries[targetIdx+1:]...)
+	return out, true
+}
+
+func filterCleanPathEntries(entries []string, existsFn func(string) bool) (kept []string, removed []string) {
+	seen := make(map[string]bool, len(entries))
+	kept = make([]string, 0, len(entries))
+	for _, entry := range entries {
+		norm := strings.ToLower(normalizePath(ExpandPathEntry(entry)))
+		if norm == "" {
+			norm = strings.ToLower(normalizePath(entry))
+		}
+		if norm == "" || seen[norm] || (existsFn != nil && !existsFn(entry)) {
+			removed = append(removed, entry)
+			continue
+		}
+		seen[norm] = true
+		kept = append(kept, entry)
+	}
+	return kept, removed
+}
+
+func dirExists(dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	info, err := os.Stat(dir)
+	return err == nil && info.IsDir()
 }
 
 // ContainsDir checks whether entries (or effective PATH) contains dir case-insensitively.

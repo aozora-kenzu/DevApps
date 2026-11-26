@@ -15,7 +15,7 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:            "UniDevUI — Portable Runtimes & Windows Setup",
+		Title:            "UniDevUI — Portable Runtimes & Windows Apps",
 		Width:            1200,
 		Height:           800,
 		MinWidth:         940,

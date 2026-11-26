@@ -622,7 +622,7 @@ html, body {
     box-shadow: inset 0 0 0 1px rgba(91, 156, 246, 0.35);
 }
 
-/* Clean Install Env Banner & Checkboxes */
+/* Windows Apps Env Banner & Checkboxes */
 .env-banner {
     background: var(--bg-surface);
     border: 1px solid var(--border-subtle);
@@ -711,6 +711,15 @@ html, body {
 }
 
 /* PATH Inspector Table */
+.path-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
 .path-table {
     display: flex;
     flex-direction: column;
@@ -735,9 +744,44 @@ html, body {
     background: rgba(125, 192, 119, 0.05);
 }
 
+.path-entry-row.missing {
+    border-color: rgba(235, 111, 114, 0.35);
+    background: rgba(235, 111, 114, 0.05);
+}
+
 .path-index {
     color: var(--text-muted);
     min-width: 24px;
+    flex-shrink: 0;
+}
+
+.path-entry-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.path-entry-text {
+    overflow-wrap: anywhere;
+    color: var(--text-primary);
+}
+
+.path-entry-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.btn-xs {
+    padding: 2px 7px;
+    font-size: 11px;
+    border-radius: 4px;
+    min-height: 24px;
 }
 
 /* Bottom Terminal Drawer */
@@ -1247,4 +1291,48 @@ html, body {
 
 .btn-restore:hover:not(:disabled) {
     background: var(--green-soft);
+}
+
+/* About Modal */
+.about-hero {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.about-brand-mark {
+    width: 42px;
+    height: 42px;
+    border-radius: 9px;
+    background: var(--accent-blue-soft);
+    border: 1px solid rgba(91, 156, 246, 0.45);
+    color: var(--accent-blue);
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.about-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.about-app-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.about-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
 }

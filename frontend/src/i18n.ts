@@ -3,7 +3,7 @@ export type Lang = 'en' | 'id';
 export interface Translations {
     loading: string;
     tabRuntimes: string;
-    tabCleanInstall: string;
+    tabWindowsApps: string;
     outputLabel: string;
     outputChangeTooltip: string;
     btnPackages: string;
@@ -94,6 +94,17 @@ export interface Translations {
     pathInspectorSubtitle: (count: number) => string;
     pathInspectorEmpty: string;
     managedBadge: string;
+    pathBtnAddFolder: string;
+    pathBtnClean: (n: number) => string;
+    pathBtnRefresh: string;
+    pathBtnMoveUpTip: string;
+    pathBtnMoveDownTip: string;
+    pathBtnOpen: string;
+    pathBtnOpenTip: string;
+    pathBtnRemove: string;
+    pathBtnRemoveTip: string;
+    pathBadgeMissing: string;
+    pathBadgeDuplicate: string;
     terminalTitle: string;
     btnCancel: string;
     btnClear: string;
@@ -115,7 +126,7 @@ export interface Translations {
     modalSave: string;
     checkedAt: (ts: string) => string;
 
-    // Clean Install / Essentials
+    // Windows Apps
     essCatAll: string;
     essCatBrowsers: string;
     essCatUtilities: string;
@@ -137,6 +148,7 @@ export interface Translations {
     essRestartAdmin: string;
     essConfigStoredHint: (path: string) => string;
     essInstallSilent: string;
+    essReinstallSilent: string;
     essBadgeInstalled: (ver: string) => string;
     essBadgeInstalledNoVer: string;
     essStatusNewerThanWinget: string;
@@ -194,12 +206,31 @@ export interface Translations {
     essBadgeWingetPinned: string;
     essBadgeLocalEntry: string;
     essLocalEntryNoUpdateTip: string;
+
+    // About Modal
+    btnAbout: string;
+    btnAboutTooltip: string;
+    aboutTitle: string;
+    aboutSubtitle: string;
+    aboutDesc: string;
+    aboutVersionLabel: string;
+    aboutAuthorLabel: string;
+    aboutEmailLabel: string;
+    aboutWebsiteLabel: string;
+    aboutTelegramLabel: string;
+    aboutRepoLabel: string;
+    aboutLicenseLabel: string;
+    aboutTechLabel: string;
+    aboutAppDirLabel: string;
+    aboutOutputDirLabel: string;
+    aboutOpenRepo: string;
+    aboutOpenTelegram: string;
 }
 
 const en: Translations = {
     loading: 'Loading UniDevUI...',
     tabRuntimes: 'Portable Runtimes',
-    tabCleanInstall: 'Clean Install',
+    tabWindowsApps: 'Windows Apps',
     outputLabel: 'Output',
     outputChangeTooltip: 'Click to change archive extraction output directory',
     btnPackages: 'Packages (.conf)',
@@ -214,7 +245,7 @@ const en: Translations = {
     btnOpenFolderTooltip: 'Open extraction output directory in Explorer',
     btnRefreshWinget: 'Refresh Winget',
     searchPlaceholder: 'Filter apps or tools...',
-    searchEssPlaceholder: 'Filter clean install apps...',
+    searchEssPlaceholder: 'Filter Windows apps...',
     navWorkspace: 'Workspace',
     navAll: 'All Packages',
     navCore: 'Core Runtimes',
@@ -291,6 +322,17 @@ const en: Translations = {
     pathInspectorSubtitle: (count) => `${count} entries · Evaluated from top to bottom`,
     pathInspectorEmpty: 'User PATH (HKCU\\Environment) is currently empty.',
     managedBadge: 'Managed by UniDevUI',
+    pathBtnAddFolder: '+ Add Folder',
+    pathBtnClean: (n) => `Clean Missing/Dup (${n})`,
+    pathBtnRefresh: 'Refresh',
+    pathBtnMoveUpTip: 'Move up (higher PATH priority)',
+    pathBtnMoveDownTip: 'Move down (lower PATH priority)',
+    pathBtnOpen: 'Open',
+    pathBtnOpenTip: 'Open directory in Explorer',
+    pathBtnRemove: 'Remove',
+    pathBtnRemoveTip: 'Remove this entry from User PATH',
+    pathBadgeMissing: 'Missing',
+    pathBadgeDuplicate: 'Duplicate',
     terminalTitle: 'TERMINAL OUTPUT',
     btnCancel: 'Cancel',
     btnClear: 'Clear',
@@ -333,6 +375,7 @@ const en: Translations = {
     essRestartAdmin: 'Restart as Admin',
     essConfigStoredHint: (path) => `Config: ${path}`,
     essInstallSilent: 'Install (Silent)',
+    essReinstallSilent: 'Reinstall',
     essBadgeInstalled: (ver) => `Installed · v${ver}`,
     essBadgeInstalledNoVer: 'Installed',
     essStatusNewerThanWinget: '★ Newer than Winget',
@@ -340,7 +383,7 @@ const en: Translations = {
     essBadgeMsStore: 'MS Store',
     essBadgeUAC: 'UAC / Admin',
     essSecSubtitle: 'Silent install Windows apps via Winget · Check boxes to install multiple apps at once',
-    essEmpty: 'No matching Clean Install apps.',
+    essEmpty: 'No matching Windows apps.',
     essSearchInWinget: (q) => `Search "${q}" in Winget Catalog →`,
     essSearchTitle: 'Winget Catalog Search',
     essSearchSubtitle: 'Search any Windows application outside the built-in 27 list and install silently',
@@ -390,12 +433,31 @@ const en: Translations = {
     essBadgeWingetPinned: 'Winget Pinned',
     essBadgeLocalEntry: 'Local Entry',
     essLocalEntryNoUpdateTip: 'Local ARP/MSIX entry has no Winget catalog ID; ignored locally in UniDevUI',
+
+    btnAbout: 'About',
+    btnAboutTooltip: 'About UniDevUI, version, developer & license',
+    aboutTitle: 'About UniDevUI',
+    aboutSubtitle: 'Portable Runtimes & Windows Apps Manager',
+    aboutDesc:
+        'Portable Windows desktop utility for setting up developer runtimes cleanly without polluting the OS (safe HKCU User PATH management) and automating silent Windows app installs, updates, and Winget version pins.',
+    aboutVersionLabel: 'Version',
+    aboutAuthorLabel: 'Developer',
+    aboutEmailLabel: 'Email',
+    aboutWebsiteLabel: 'Website',
+    aboutTelegramLabel: 'Telegram',
+    aboutRepoLabel: 'GitHub Repo',
+    aboutLicenseLabel: 'License',
+    aboutTechLabel: 'Built With',
+    aboutAppDirLabel: 'App Folder',
+    aboutOutputDirLabel: 'Output Folder',
+    aboutOpenRepo: 'Open GitHub',
+    aboutOpenTelegram: 'Contact Telegram',
 };
 
 const id: Translations = {
     loading: 'Memuat UniDevUI...',
     tabRuntimes: 'Portable Runtimes',
-    tabCleanInstall: 'Clean Install',
+    tabWindowsApps: 'Windows Apps',
     outputLabel: 'Output',
     outputChangeTooltip: 'Klik untuk mengganti folder output ekstraksi arsip',
     btnPackages: 'Packages (.conf)',
@@ -410,7 +472,7 @@ const id: Translations = {
     btnOpenFolderTooltip: 'Buka folder output ekstraksi di Explorer',
     btnRefreshWinget: 'Refresh Winget',
     searchPlaceholder: 'Cari aplikasi atau tool...',
-    searchEssPlaceholder: 'Filter aplikasi clean install...',
+    searchEssPlaceholder: 'Filter aplikasi Windows...',
     navWorkspace: 'Workspace',
     navAll: 'Semua Paket',
     navCore: 'Core Runtimes',
@@ -487,6 +549,17 @@ const id: Translations = {
     pathInspectorSubtitle: (count) => `${count} entri · Dievaluasi dari atas ke bawah`,
     pathInspectorEmpty: 'User PATH (HKCU\\Environment) masih kosong.',
     managedBadge: 'Dikelola UniDevUI',
+    pathBtnAddFolder: '+ Tambah Folder',
+    pathBtnClean: (n) => `Bersihkan Rusak/Duplikat (${n})`,
+    pathBtnRefresh: 'Refresh',
+    pathBtnMoveUpTip: 'Naikkan urutan (prioritas lebih tinggi)',
+    pathBtnMoveDownTip: 'Turunkan urutan (prioritas lebih rendah)',
+    pathBtnOpen: 'Buka',
+    pathBtnOpenTip: 'Buka folder di Explorer',
+    pathBtnRemove: 'Hapus',
+    pathBtnRemoveTip: 'Hapus entri ini dari User PATH',
+    pathBadgeMissing: 'Hilang',
+    pathBadgeDuplicate: 'Duplikat',
     terminalTitle: 'OUTPUT TERMINAL',
     btnCancel: 'Batal',
     btnClear: 'Bersihkan',
@@ -529,6 +602,7 @@ const id: Translations = {
     essRestartAdmin: 'Restart sebagai Admin',
     essConfigStoredHint: (path) => `Config: ${path}`,
     essInstallSilent: 'Install (Silent)',
+    essReinstallSilent: 'Install Ulang',
     essBadgeInstalled: (ver) => `Terpasang · v${ver}`,
     essBadgeInstalledNoVer: 'Terpasang',
     essStatusNewerThanWinget: '★ Lebih baru dari Winget',
@@ -536,7 +610,7 @@ const id: Translations = {
     essBadgeMsStore: 'MS Store',
     essBadgeUAC: 'UAC / Admin',
     essSecSubtitle: 'Instalasi silent aplikasi Windows via Winget · Centang untuk install banyak sekaligus',
-    essEmpty: 'Tidak ada aplikasi Clean Install yang cocok.',
+    essEmpty: 'Tidak ada aplikasi Windows Apps yang cocok.',
     essSearchInWinget: (q) => `Cari "${q}" di Katalog Winget →`,
     essSearchTitle: 'Pencarian Katalog Winget',
     essSearchSubtitle: 'Cari aplikasi Windows lain di luar daftar 27 bawaan lalu install secara silent',
@@ -586,6 +660,25 @@ const id: Translations = {
     essBadgeWingetPinned: 'Winget Pinned',
     essBadgeLocalEntry: 'Entri Lokal',
     essLocalEntryNoUpdateTip: 'Entri lokal ARP/MSIX tidak memiliki ID repositori Winget; diabaikan lokal di UniDevUI',
+
+    btnAbout: 'Tentang',
+    btnAboutTooltip: 'Tentang UniDevUI, versi, pengembang & lisensi',
+    aboutTitle: 'Tentang UniDevUI',
+    aboutSubtitle: 'Manajer Portable Runtimes & Windows Apps',
+    aboutDesc:
+        'Utilitas desktop Windows portabel untuk menyiapkan runtime pemrograman secara rapi (manajemen User PATH terisolasi) sekaligus mengotomatiskan instalasi silent, pembaruan, dan penguncian versi aplikasi Windows melalui Winget.',
+    aboutVersionLabel: 'Versi',
+    aboutAuthorLabel: 'Pengembang',
+    aboutEmailLabel: 'Email',
+    aboutWebsiteLabel: 'Situs Web',
+    aboutTelegramLabel: 'Telegram',
+    aboutRepoLabel: 'Repositori GitHub',
+    aboutLicenseLabel: 'Lisensi',
+    aboutTechLabel: 'Dibangun Dengan',
+    aboutAppDirLabel: 'Folder Aplikasi',
+    aboutOutputDirLabel: 'Folder Output',
+    aboutOpenRepo: 'Buka GitHub',
+    aboutOpenTelegram: 'Hubungi Telegram',
 };
 
 export function getT(lang: string | undefined): Translations {

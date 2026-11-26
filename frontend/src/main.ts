@@ -3,6 +3,7 @@ import {
     AddCustomDirToPath,
     AddToPath,
     CancelActiveTask,
+    CleanInvalidUserPath,
     DeleteInstalledVersion,
     DownloadAndInstall,
     EnrichWingetSearch,
@@ -13,16 +14,21 @@ import {
     InstallSelectedEssentials,
     InstallWingetByID,
     InstallWingetCLI,
+    MoveUserPathEntry,
     OpenAppPathFolder,
     OpenEssentialsConf,
     OpenExternalURL,
     OpenIgnoredConf,
     OpenPackagesConf,
+    OpenUserPathDir,
+    PickAndAddUserPathDir,
     PickOutputDirectory,
     PinWingetApp,
+    RefreshUserPath,
     RefreshWingetStatus,
     ReloadConfig,
     RemoveFromPath,
+    RemoveUserPathEntry,
     RestartAsAdmin,
     RunEssentialTool,
     SearchWingetApps,
@@ -109,6 +115,7 @@ let initialLogsLoaded = false;
 let terminalCollapsed = false;
 let busy = false;
 let showPathModal = false;
+let showAboutModal = false;
 let outputDirDraft = '';
 
 let scrollByViewKey: Record<string, number> = {};
@@ -835,6 +842,8 @@ function renderEssentialCard(item: main.EssentialView): string {
 function renderWingetSearchView(): string {
     const t = getT(currentLang());
     const pinnedIDs = new Set((state?.essentials || []).map((e) => e.wingetId.toLowerCase()));
+    const installedByID = new Map((state?.installedApps || []).map((a) => [a.id.toLowerCase(), a]));
+    const curatedByID = new Map((state?.essentials || []).map((e) => [e.wingetId.toLowerCase(), e]));
     const wingetMissing = !state?.wingetEnv?.wingetAvailable;
 
     let bodyHtml = `<div class="empty-state">${escapeHtml(t.essSearchEmpty)}</div>`;
@@ -845,7 +854,27 @@ function renderWingetSearchView(): string {
             <div class="cards-grid">
                 ${wingetSearchResults
                     .map((row) => {
-                        const isPinned = pinnedIDs.has(row.id.toLowerCase());
+                        const idLower = row.id.toLowerCase();
+                        const isPinned = pinnedIDs.has(idLower);
+                        const liveInst = installedByID.get(idLower);
+                        const liveEss = curatedByID.get(idLower);
+
+                        const isInstalled = Boolean(liveInst || liveEss?.installed || row.installed);
+                        const installedVer =
+                            liveInst?.installedVer || (liveEss?.installed ? liveEss.installedVer : '') || row.installedVer || '';
+                        const isIgnored = Boolean(liveInst?.ignored || liveEss?.updateIgnored);
+                        const availVer = isIgnored
+                            ? ''
+                            : liveInst?.hasUpdate
+                              ? liveInst.availableVer
+                              : liveEss?.hasUpdate
+                                ? liveEss.availableVer
+                                : row.hasUpdate
+                                  ? row.available || row.version
+                                  : '';
+                        const hasUpdate = Boolean(availVer);
+                        const matchedBy = liveEss?.matchedBy || row.matchedBy || (liveInst ? 'Winget' : '');
+
                         const det = getCachedDetails(row.id, row.source);
                         const domain = shortDomain(det?.homepage || det?.publisherUrl || det?.installerUrl);
                         const metaStrip = renderMetaStrip({
@@ -859,8 +888,91 @@ function renderWingetSearchView(): string {
                             ? `<div class="card-desc card-desc-clamp">${escapeHtml(det.description)}</div>`
                             : `<div class="card-desc">${escapeHtml(t.essVersionLabel)} ${escapeHtml(row.version || '-')}</div>`;
 
+                        const statusBadge = isInstalled
+                            ? isIgnored
+                                ? `<span class="badge badge-active">${escapeHtml(installedVer ? t.essBadgeInstalled(installedVer) : t.essBadgeInstalledNoVer)}</span>`
+                                : hasUpdate
+                                  ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+                                  : installedVer
+                                    ? `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalled(installedVer))}</span>`
+                                    : `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalledNoVer)}</span>`
+                            : '';
+
+                        const versionCompareHtml = isInstalled
+                            ? `
+                                <div class="version-compare">
+                                    <div class="vc-group">
+                                        <span class="vc-item" ${matchedBy ? `title="${escapeHtml(matchedBy)}"` : ''}>
+                                            <span class="vc-label">${escapeHtml(t.installedLabel)}</span>
+                                            <span class="vc-val">${escapeHtml(installedVer ? `v${installedVer}` : t.statusDetected)}</span>
+                                        </span>
+                                        ${
+                                            row.version
+                                                ? `
+                                                <span class="vc-sep">·</span>
+                                                <span class="vc-item">
+                                                    <span class="vc-label">${escapeHtml(t.essWingetLatestLabel)}</span>
+                                                    <span class="vc-val">v${escapeHtml(row.version)}</span>
+                                                </span>
+                                            `
+                                                : ''
+                                        }
+                                    </div>
+                                    ${
+                                        isIgnored
+                                            ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
+                                            : hasUpdate
+                                              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+                                              : `<span class="badge badge-active">${escapeHtml(installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
+                                    }
+                                </div>
+                            `
+                            : '';
+
+                        const installOrUpdateBtn = isInstalled
+                            ? `
+                                ${
+                                    hasUpdate
+                                        ? `
+                                        <button
+                                            class="btn btn-primary btn-sm"
+                                            data-action="winget-update-raw"
+                                            data-name="${escapeHtml(row.name)}"
+                                            data-wid="${escapeHtml(row.id)}"
+                                            data-source="${escapeHtml(row.source || 'winget')}"
+                                            ${busy || wingetMissing ? 'disabled' : ''}
+                                        >
+                                            ${escapeHtml(t.btnUpdateTool)}
+                                        </button>
+                                    `
+                                        : ''
+                                }
+                                <button
+                                    class="btn btn-sm"
+                                    data-action="winget-install-raw"
+                                    data-name="${escapeHtml(row.name)}"
+                                    data-wid="${escapeHtml(row.id)}"
+                                    data-source="${escapeHtml(row.source || 'winget')}"
+                                    ${busy || wingetMissing ? 'disabled' : ''}
+                                >
+                                    ${escapeHtml(t.essReinstallSilent)}
+                                </button>
+                            `
+                            : `
+                                <button
+                                    class="btn btn-primary btn-sm"
+                                    data-action="winget-install-raw"
+                                    data-name="${escapeHtml(row.name)}"
+                                    data-wid="${escapeHtml(row.id)}"
+                                    data-source="${escapeHtml(row.source || 'winget')}"
+                                    ${busy || wingetMissing ? 'disabled' : ''}
+                                >
+                                    ${escapeHtml(t.essInstallSilent)}
+                                </button>
+                            `;
+
                         return `
-                        <div class="card">
+                        <div class="card ${isInstalled ? 'card-active' : ''}">
                             <div class="card-top">
                                 <div class="card-main-row">
                                     ${renderAppIcon(row.id, row.name, { wingetId: row.id, dataUrl: det?.iconDataUrl })}
@@ -877,19 +989,12 @@ function renderWingetSearchView(): string {
                                         ${metaStrip}
                                     </div>
                                 </div>
+                                ${statusBadge}
                             </div>
+                            ${versionCompareHtml}
                             <div class="card-controls">
                                 <div class="controls-left">
-                                    <button
-                                        class="btn btn-primary btn-sm"
-                                        data-action="winget-install-raw"
-                                        data-name="${escapeHtml(row.name)}"
-                                        data-wid="${escapeHtml(row.id)}"
-                                        data-source="${escapeHtml(row.source || 'winget')}"
-                                        ${busy || wingetMissing ? 'disabled' : ''}
-                                    >
-                                        ${escapeHtml(t.essInstallSilent)}
-                                    </button>
+                                    ${installOrUpdateBtn}
                                     <button
                                         class="btn btn-sm"
                                         data-action="winget-pin"
@@ -949,6 +1054,66 @@ function renderWingetSearchView(): string {
             </div>
             ${bodyHtml}
         </section>
+    `;
+}
+
+function renderAboutModal(s: main.DashboardState): string {
+    if (!showAboutModal) return '';
+    const t = getT(currentLang());
+    const ver = s.appVersion || '1.0.0';
+
+    const linkBtn = (url: string): string =>
+        `<button class="detail-link-btn" data-open-url="${escapeHtml(url)}">${escapeHtml(url)}</button>`;
+
+    const infoRows: Array<[string, string, boolean]> = [
+        [t.aboutVersionLabel, `<span class="detail-val-mono">v${escapeHtml(ver)}</span>`, false],
+        [t.aboutAuthorLabel, escapeHtml('AKZ Team'), true],
+        [t.aboutEmailLabel, `<span class="detail-val-mono">${escapeHtml('aozora@botsec.dev')}</span>`, false],
+        [t.aboutWebsiteLabel, linkBtn('https://botsec.dev'), false],
+        [t.aboutTelegramLabel, linkBtn('https://t.me/AozoraKZ'), false],
+        [t.aboutRepoLabel, linkBtn('https://github.com/aozora-kenzu/UniDevUI'), false],
+        [t.aboutLicenseLabel, escapeHtml('MIT License (Copyright © 2026 AKZ Team)'), true],
+        [t.aboutTechLabel, escapeHtml('Go + Wails v2 + Vanilla TypeScript'), true],
+        [t.aboutAppDirLabel, `<span class="detail-val-mono">${escapeHtml(s.appDir)}</span>`, false],
+        [t.aboutOutputDirLabel, `<span class="detail-val-mono">${escapeHtml(s.baseDir)}</span>`, false],
+    ];
+
+    const gridHtml = infoRows
+        .map(([k, val]) => `<div class="detail-key">${escapeHtml(k)}</div><div class="detail-val">${val}</div>`)
+        .join('');
+
+    return `
+        <div class="modal-backdrop" id="about-modal-backdrop">
+            <div class="modal-card detail-modal-card">
+                <div class="modal-header">
+                    <span class="modal-title">${escapeHtml(t.aboutTitle)}</span>
+                    <button class="btn btn-sm" id="btn-about-close">✕</button>
+                </div>
+                <div class="detail-modal-scroll">
+                    <div class="about-hero">
+                        <div class="about-brand-mark">&gt;_</div>
+                        <div class="about-title-block">
+                            <div class="about-app-name">
+                                <span>UniDevUI</span>
+                                <span class="badge badge-active">v${escapeHtml(ver)}</span>
+                            </div>
+                            <div class="about-subtitle">${escapeHtml(t.aboutSubtitle)}</div>
+                        </div>
+                    </div>
+                    <div class="detail-desc-box">${escapeHtml(t.aboutDesc)}</div>
+                    <div class="detail-grid">${gridHtml}</div>
+                </div>
+                <div class="modal-footer">
+                    <div class="controls-left">
+                        <button class="btn btn-sm" data-open-url="https://github.com/aozora-kenzu/UniDevUI">${escapeHtml(t.aboutOpenRepo)}</button>
+                        <button class="btn btn-sm" data-open-url="https://t.me/AozoraKZ">${escapeHtml(t.aboutOpenTelegram)}</button>
+                    </div>
+                    <div class="controls-right">
+                        <button class="btn btn-primary btn-sm" id="btn-about-close-footer">${escapeHtml(t.essModalClose)}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     `;
 }
 
@@ -1411,15 +1576,68 @@ function renderInstalledWorkspaceView(s: main.DashboardState): string {
 
 function renderPathInspector(s: main.DashboardState): string {
     const t = getT(currentLang());
-    const baseLower = s.baseDir.toLowerCase();
-    const rows = s.userPathList
-        .map((entry, idx) => {
-            const managed = entry.toLowerCase().startsWith(baseLower);
+    const allEntries =
+        s.userPathEntries && s.userPathEntries.length > 0
+            ? s.userPathEntries
+            : (s.userPathList || []).map((p, idx) => ({
+                  index: idx,
+                  path: p,
+                  expanded: p,
+                  exists: true,
+                  managed: p.toLowerCase().startsWith(s.baseDir.toLowerCase()),
+                  duplicate: false,
+              }));
+
+    const isFiltered = runtimeSearchQuery.trim().length > 0;
+    const filtered = allEntries.filter((e) => matchesSearch(`${e.path} ${e.expanded}`, runtimeSearchQuery));
+    const issueCount = allEntries.filter((e) => !e.exists || e.duplicate).length;
+
+    const rows = filtered
+        .map((item) => {
+            const titleHint = item.expanded && item.expanded !== item.path ? `title="${escapeHtml(item.expanded)}"` : '';
+            const rowClass = `${item.managed ? 'managed' : ''} ${!item.exists ? 'missing' : ''}`.trim();
             return `
-                <div class="path-entry-row ${managed ? 'managed' : ''}">
-                    <span class="path-index">#${idx + 1}</span>
-                    <span>${escapeHtml(entry)}</span>
-                    ${managed ? `<span class="badge badge-active" style="margin-left:auto">${escapeHtml(t.managedBadge)}</span>` : ''}
+                <div class="path-entry-row ${rowClass}">
+                    <span class="path-index">#${item.index + 1}</span>
+                    <div class="path-entry-main">
+                        <span class="path-entry-text" ${titleHint}>${escapeHtml(item.path)}</span>
+                        ${item.managed ? `<span class="badge badge-active">${escapeHtml(t.managedBadge)}</span>` : ''}
+                        ${!item.exists ? `<span class="badge badge-warn">${escapeHtml(t.pathBadgeMissing)}</span>` : ''}
+                        ${item.duplicate ? `<span class="badge badge-idle">${escapeHtml(t.pathBadgeDuplicate)}</span>` : ''}
+                    </div>
+                    <div class="path-entry-actions">
+                        <button
+                            class="btn btn-xs"
+                            data-action="path-move"
+                            data-idx="${item.index}"
+                            data-delta="-1"
+                            ${busy || isFiltered || item.index === 0 ? 'disabled' : ''}
+                            title="${escapeHtml(t.pathBtnMoveUpTip)}"
+                        >↑</button>
+                        <button
+                            class="btn btn-xs"
+                            data-action="path-move"
+                            data-idx="${item.index}"
+                            data-delta="1"
+                            ${busy || isFiltered || item.index === allEntries.length - 1 ? 'disabled' : ''}
+                            title="${escapeHtml(t.pathBtnMoveDownTip)}"
+                        >↓</button>
+                        <button
+                            class="btn btn-xs"
+                            data-action="path-open"
+                            data-dir="${escapeHtml(item.path)}"
+                            ${!item.exists ? 'disabled' : ''}
+                            title="${escapeHtml(t.pathBtnOpenTip)}"
+                        >${escapeHtml(t.pathBtnOpen)}</button>
+                        <button
+                            class="btn btn-danger btn-xs"
+                            data-action="path-remove"
+                            data-idx="${item.index}"
+                            data-dir="${escapeHtml(item.path)}"
+                            ${busy ? 'disabled' : ''}
+                            title="${escapeHtml(t.pathBtnRemoveTip)}"
+                        >${escapeHtml(t.pathBtnRemove)}</button>
+                    </div>
                 </div>
             `;
         })
@@ -1429,7 +1647,20 @@ function renderPathInspector(s: main.DashboardState): string {
         <div>
             <div class="section-header">
                 <span class="section-title">${escapeHtml(t.pathInspectorTitle)}</span>
-                <span class="section-subtitle">${escapeHtml(t.pathInspectorSubtitle(s.userPathList.length))}</span>
+                <span class="section-subtitle">${escapeHtml(t.pathInspectorSubtitle(allEntries.length))}</span>
+            </div>
+            <div class="path-toolbar">
+                <div class="controls-left">
+                    <button class="btn btn-primary btn-sm" id="btn-path-add" ${busy ? 'disabled' : ''}>
+                        ${escapeHtml(t.pathBtnAddFolder)}
+                    </button>
+                    <button class="btn btn-sm" id="btn-path-clean" ${busy || issueCount === 0 ? 'disabled' : ''}>
+                        ${escapeHtml(t.pathBtnClean(issueCount))}
+                    </button>
+                </div>
+                <button class="btn btn-sm" id="btn-path-refresh" ${busy ? 'disabled' : ''}>
+                    ${escapeHtml(t.pathBtnRefresh)}
+                </button>
             </div>
             <div class="path-table">
                 ${rows || `<div class="empty-state">${escapeHtml(t.pathInspectorEmpty)}</div>`}
@@ -1627,7 +1858,7 @@ function renderEssentialsView(s: main.DashboardState): { sidebarHtml: string; co
         contentHtml += `
             <section>
                 <div class="section-header">
-                    <span class="section-title">${escapeHtml(t.tabCleanInstall)} (${filtered.length})</span>
+                    <span class="section-title">${escapeHtml(t.tabWindowsApps)} (${filtered.length})</span>
                     <span class="section-subtitle">${escapeHtml(t.essSecSubtitle)}</span>
                 </div>
                 <div class="cards-grid">
@@ -1773,7 +2004,7 @@ function render(skipScrollCapture = false): void {
                 <span class="brand-title">UniDevUI</span>
                 <div class="mode-tabs">
                     <button class="mode-tab ${primaryTab === 'runtimes' ? 'active' : ''}" data-primary-tab="runtimes">${escapeHtml(t.tabRuntimes)}</button>
-                    <button class="mode-tab ${primaryTab === 'essentials' ? 'active' : ''}" data-primary-tab="essentials">${escapeHtml(t.tabCleanInstall)}</button>
+                    <button class="mode-tab ${primaryTab === 'essentials' ? 'active' : ''}" data-primary-tab="essentials">${escapeHtml(t.tabWindowsApps)}</button>
                 </div>
                 ${topbarLeftMeta}
             </div>
@@ -1783,6 +2014,7 @@ function render(skipScrollCapture = false): void {
                     <button class="lang-btn ${lang === 'id' ? 'active' : ''}" data-lang="id">ID</button>
                 </div>
                 ${topbarRightActions}
+                <button class="btn" id="btn-about" title="${escapeHtml(t.btnAboutTooltip)}">ⓘ ${escapeHtml(t.btnAbout)}</button>
             </div>
         </header>
 
@@ -1844,6 +2076,7 @@ function render(skipScrollCapture = false): void {
                 : ''
         }
         ${renderDetailModal()}
+        ${renderAboutModal(state)}
     `;
 
     renderTerminalLinesOnly();
@@ -2017,6 +2250,21 @@ function bindEventListeners(): void {
             showPathModal = false;
             render();
         }
+    });
+
+    document.getElementById('btn-about')?.addEventListener('click', () => {
+        showAboutModal = true;
+        render(true);
+    });
+
+    const closeAboutModal = (): void => {
+        showAboutModal = false;
+        render(true);
+    };
+    document.getElementById('btn-about-close')?.addEventListener('click', closeAboutModal);
+    document.getElementById('btn-about-close-footer')?.addEventListener('click', closeAboutModal);
+    document.getElementById('about-modal-backdrop')?.addEventListener('click', (ev) => {
+        if (ev.target === ev.currentTarget) closeAboutModal();
     });
 
     const dirInputEl = document.getElementById('output-dir-input') as HTMLInputElement | null;
@@ -2222,6 +2470,33 @@ function bindEventListeners(): void {
         }
     });
 
+    document.getElementById('btn-path-add')?.addEventListener('click', () => {
+        PickAndAddUserPathDir()
+            .then((nextState) => {
+                state = nextState;
+                render();
+            })
+            .catch((e) => reportErr(e));
+    });
+
+    document.getElementById('btn-path-clean')?.addEventListener('click', () => {
+        CleanInvalidUserPath()
+            .then((nextState) => {
+                state = nextState;
+                render();
+            })
+            .catch((e) => reportErr(e));
+    });
+
+    document.getElementById('btn-path-refresh')?.addEventListener('click', () => {
+        RefreshUserPath()
+            .then((nextState) => {
+                state = nextState;
+                render();
+            })
+            .catch((e) => reportErr(e));
+    });
+
     document.getElementById('btn-ess-select-missing')?.addEventListener('click', () => {
         for (const item of state?.essentials || []) {
             if (!item.installed) {
@@ -2313,6 +2588,33 @@ function bindEventListeners(): void {
                 const dir = btn.dataset.dir || '';
                 if (dir) {
                     AddCustomDirToPath(dir)
+                        .then((nextState) => {
+                            state = nextState;
+                            render();
+                        })
+                        .catch((e) => reportErr(e));
+                }
+            } else if (action === 'path-move') {
+                const idx = Number.parseInt(btn.dataset.idx || '-1', 10);
+                const delta = Number.parseInt(btn.dataset.delta || '0', 10);
+                if (!Number.isNaN(idx) && idx >= 0 && delta !== 0) {
+                    MoveUserPathEntry(idx, delta)
+                        .then((nextState) => {
+                            state = nextState;
+                            render();
+                        })
+                        .catch((e) => reportErr(e));
+                }
+            } else if (action === 'path-open') {
+                const dir = btn.dataset.dir || '';
+                if (dir) {
+                    OpenUserPathDir(dir).catch((e) => reportErr(e));
+                }
+            } else if (action === 'path-remove') {
+                const idx = Number.parseInt(btn.dataset.idx || '-1', 10);
+                const dir = btn.dataset.dir || '';
+                if (!Number.isNaN(idx) && idx >= 0) {
+                    RemoveUserPathEntry(idx, dir)
                         .then((nextState) => {
                             state = nextState;
                             render();
@@ -2497,8 +2799,15 @@ EventsOn('state:refresh', () => {
 });
 
 window.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && detailTarget) {
+    if (ev.key !== 'Escape') return;
+    if (detailTarget) {
         detailTarget = null;
+        render(true);
+    } else if (showAboutModal) {
+        showAboutModal = false;
+        render(true);
+    } else if (showPathModal) {
+        showPathModal = false;
         render(true);
     }
 });

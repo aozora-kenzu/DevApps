@@ -2,6 +2,7 @@ package essentials
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -455,5 +456,48 @@ func TestIgnoredAppsConfigCRUDAndManageableIDCheck(t *testing.T) {
 
 	if !IsManageableWingetID("LeNgocKhoa.Laragon") || IsManageableWingetID(`ARP\Machine\X64\Firefox`) || IsManageableWingetID(`MSIX\Foo`) {
 		t.Fatal("unexpected IsManageableWingetID result")
+	}
+}
+
+func TestWingetNoInstalledMatchErrHelper(t *testing.T) {
+	if !isWingetNoInstalledMatchErr(errors.New("winget exited with code 2316632084 (0x8A150014)")) {
+		t.Fatal("expected 0x8A150014 error to match")
+	}
+	if isWingetNoInstalledMatchErr(errors.New("winget exited with code 1 (0x1)")) {
+		t.Fatal("unexpected match for generic error")
+	}
+}
+
+func TestAnnotateSearchRowsInstalled(t *testing.T) {
+	byID := map[string]WingetTableRow{
+		"obsidian.obsidian": {ID: "Obsidian.Obsidian", Name: "Obsidian", Version: "1.7.0", Available: "1.8.0"},
+	}
+	regApps := []RegistryAppEntry{
+		{DisplayName: "Mozilla Firefox (x64 en-US)", DisplayVersion: "160.0", Publisher: "Mozilla"},
+	}
+	ignored := map[string]IgnoredApp{
+		"voidtools.everything": {ID: "voidtools.Everything", Name: "Everything"},
+	}
+	byID["voidtools.everything"] = WingetTableRow{ID: "voidtools.Everything", Name: "Everything", Version: "1.4.1", Available: "1.5.0"}
+
+	searchRows := []WingetTableRow{
+		{Name: "Obsidian", ID: "Obsidian.Obsidian", Version: "1.8.0", Source: "winget"},
+		{Name: "Mozilla Firefox", ID: "Mozilla.Firefox", Version: "161.0", Source: "winget"},
+		{Name: "Everything", ID: "voidtools.Everything", Version: "1.5.0", Source: "winget"},
+		{Name: "7-Zip", ID: "7zip.7zip", Version: "26.06", Source: "winget"},
+	}
+
+	got := AnnotateSearchRowsInstalled(searchRows, byID, regApps, nil, ignored)
+	if !got[0].Installed || got[0].InstalledVer != "1.7.0" || !got[0].HasUpdate || got[0].Available != "1.8.0" {
+		t.Fatalf("expected Obsidian installed+update, got %+v", got[0])
+	}
+	if !got[1].Installed || got[1].MatchedBy != "Windows Registry" || !got[1].HasUpdate || got[1].Available != "161.0" {
+		t.Fatalf("expected Firefox installed via registry+update, got %+v", got[1])
+	}
+	if !got[2].Installed || got[2].HasUpdate {
+		t.Fatalf("expected ignored Everything installed without HasUpdate, got %+v", got[2])
+	}
+	if got[3].Installed {
+		t.Fatalf("expected 7-Zip not installed, got %+v", got[3])
 	}
 }

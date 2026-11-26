@@ -43,7 +43,7 @@ func EnsureIgnoredConfig(appDir string) (string, error) {
 // DefaultIgnoredConf returns the initial template for ignored_updates.conf.
 func DefaultIgnoredConf() string {
 	return `# ==============================================================================
-# UniDevUI - Ignored Apps & Pinned Versions (Clean Install / Updates)
+# UniDevUI - Ignored Apps & Pinned Versions (Windows Apps / Updates)
 # ==============================================================================
 # File ini tersimpan di folder tempat UniDevUI.exe berada.
 # Aplikasi di daftar ini disembunyikan dari daftar Update & Installed utama,

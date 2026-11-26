@@ -58,3 +58,30 @@ func TestCompareSemverAndExtractVersionString(t *testing.T) {
 		}
 	}
 }
+
+func TestUserPathEntrySliceHelpers(t *testing.T) {
+	base := []string{`C:\AppPath\node\22.23.5`, `C:\Tools\bin`, `C:\Missing\dead`}
+
+	swapped, moved, err := swapPathEntries(base, 1, -1)
+	if err != nil || !moved {
+		t.Fatalf("expected move up to succeed, got moved=%v err=%v", moved, err)
+	}
+	if swapped[0] != `C:\Tools\bin` || swapped[1] != `C:\AppPath\node\22.23.5` {
+		t.Fatalf("unexpected swap result: %v", swapped)
+	}
+	if _, movedBoundary, err := swapPathEntries(base, 0, -1); err != nil || movedBoundary {
+		t.Fatalf("expected boundary move up to be a no-op, got moved=%v err=%v", movedBoundary, err)
+	}
+
+	removed, ok := removePathEntry(base, 1, `C:\Tools\bin`)
+	if !ok || len(removed) != 2 || removed[1] != `C:\Missing\dead` {
+		t.Fatalf("unexpected remove result: ok=%v res=%v", ok, removed)
+	}
+
+	kept, cleaned := filterCleanPathEntries([]string{`C:\Exist`, `c:\exist\`, `C:\Dead`}, func(raw string) bool {
+		return normalizePath(raw) != `C:\Dead`
+	})
+	if len(kept) != 1 || len(cleaned) != 2 {
+		t.Fatalf("unexpected clean result: kept=%v cleaned=%v", kept, cleaned)
+	}
+}

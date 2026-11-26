@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,11 +12,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
 	"github.com/aozora-kenzu/UniDevUI/internal/archive"
@@ -162,6 +165,11 @@ func computeToolStatus(st *ToolStatus) string {
 
 // InstallTool executes the requested tool installation ("install" | "update" | "fix") and streams live output.
 func InstallTool(ctx context.Context, toolID, mode, baseDir string, log Logger) error {
+	return InstallToolWithProgress(ctx, toolID, mode, baseDir, log, nil)
+}
+
+// InstallToolWithProgress executes the requested tool installation while forwarding download/install progress events.
+func InstallToolWithProgress(ctx context.Context, toolID, mode, baseDir string, log Logger, onProgress archive.ProgressCallback) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "update", "fix":
 	default:
@@ -175,9 +183,9 @@ func InstallTool(ctx context.Context, toolID, mode, baseDir string, log Logger) 
 	case "tauri":
 		return installCargoTauri(ctx, baseDir, mode, log)
 	case "vsbuildtools":
-		return installVSBuildTools(ctx, baseDir, mode, log)
+		return installVSBuildTools(ctx, baseDir, mode, log, onProgress)
 	case "webview2":
-		return installWebView2(ctx, baseDir, mode, log)
+		return installWebView2(ctx, baseDir, mode, log, onProgress)
 	default:
 		return fmt.Errorf("unknown tool: %s", toolID)
 	}
@@ -371,6 +379,11 @@ func fetchVSBuildToolsLatest(ctx context.Context) (string, error) {
 }
 
 func fetchWebView2Latest(ctx context.Context) (string, error) {
+	// Query official Winget Evergreen manifest first so WebView2 Runtime isn't compared against Edge Browser versions.
+	if ver, _, err := resolveWingetPackageShow(ctx, webview2WingetID); err == nil && ver != "" {
+		return ver, nil
+	}
+
 	var products []struct {
 		Product  string `json:"Product"`
 		Releases []struct {
@@ -393,6 +406,51 @@ func fetchWebView2Latest(ctx context.Context) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("WebView2 Stable Windows x64 release not found")
+}
+
+func resolveWingetPackageShow(ctx context.Context, wingetID string) (version string, installerURL string, err error) {
+	wingetExe := findWingetExe()
+	if wingetExe == "" {
+		return "", "", fmt.Errorf("winget.exe not found")
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(runCtx, wingetExe, "show", "--id", wingetID, "-e", "--source", "winget", "--accept-source-agreements")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, cmdErr := cmd.CombinedOutput()
+	ver, urlStr := parseWingetShowVersionAndURL(string(out))
+	if ver == "" && urlStr == "" && cmdErr != nil {
+		return "", "", cmdErr
+	}
+	return ver, urlStr, nil
+}
+
+func parseWingetShowVersionAndURL(raw string) (version string, installerURL string) {
+	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
+	for _, line := range strings.Split(normalized, "\n") {
+		if idx := strings.LastIndex(line, "\r"); idx >= 0 {
+			line = line[idx+1:]
+		}
+		trimmed := strings.TrimSpace(line)
+		colon := strings.IndexByte(trimmed, ':')
+		if colon <= 0 {
+			continue
+		}
+		key := strings.ToLower(strings.TrimSpace(trimmed[:colon]))
+		val := strings.TrimSpace(trimmed[colon+1:])
+		switch key {
+		case "version":
+			if version == "" {
+				version = val
+			}
+		case "installer url":
+			if installerURL == "" {
+				installerURL = val
+			}
+		}
+	}
+	return version, installerURL
 }
 
 func fetchToolJSON(ctx context.Context, url string, dst any) error {
@@ -483,9 +541,9 @@ func installCargoTauri(ctx context.Context, baseDir, mode string, log Logger) er
 	return nil
 }
 
-func installVSBuildTools(ctx context.Context, baseDir, mode string, log Logger) error {
+func installVSBuildTools(ctx context.Context, baseDir, mode string, log Logger, onProgress archive.ProgressCallback) error {
 	override := "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-	if wingetExe, err := exec.LookPath("winget.exe"); err == nil {
+	if wingetExe := findWingetExe(); wingetExe != "" {
 		subCmd := "install"
 		args := []string{"install", "--id", vsBuildToolsWingetID, "-e", "--accept-source-agreements", "--accept-package-agreements", "--override", override}
 		if mode == "update" {
@@ -514,7 +572,7 @@ func installVSBuildTools(ctx context.Context, baseDir, mode string, log Logger) 
 		"Mengunduh bootstrapper vs_BuildTools.exe dari Microsoft...",
 	)
 	cacheDir := filepath.Join(baseDir, "_cache")
-	installer, err := archive.DownloadFile(ctx, vsBootstrapURL, cacheDir, nil, func(lvl, en, id string) { log(lvl, en, id) })
+	installer, err := archive.DownloadFileNamed(ctx, vsBootstrapURL, cacheDir, "vs_BuildTools.exe", wrapToolProgress(onProgress, "VS Build Tools"), func(lvl, en, id string) { log(lvl, en, id) })
 	if err != nil {
 		return err
 	}
@@ -524,21 +582,52 @@ func installVSBuildTools(ctx context.Context, baseDir, mode string, log Logger) 
 	} else if mode == "update" {
 		bootArgs = []string{"--update", "--wait", "--passive"}
 	}
+	if onProgress != nil {
+		onProgress(archive.ProgressEvent{Stage: "install", Percent: -1, Detail: "VS Build Tools..."})
+	}
 	cmdDesc := fmt.Sprintf("Running %s %s", installer, strings.Join(bootArgs, " "))
 	cmdDescID := fmt.Sprintf("Menjalankan %s %s", installer, strings.Join(bootArgs, " "))
 	log("CMD", cmdDesc, cmdDescID)
-	return runStreamingCmd(ctx, buildMergedEnv(baseDir), log, installer, bootArgs...)
+	err = runInstallerWithElevationFallback(ctx, buildMergedEnv(baseDir), log, installer, bootArgs...)
+	if isExitCode(err, 3010) {
+		log("OK",
+			"Visual Studio Build Tools completed; restart Windows to finish applying updates.",
+			"Visual Studio Build Tools selesai; restart Windows untuk menyelesaikan pembaruan.",
+		)
+		return nil
+	}
+	return err
 }
 
-func installWebView2(ctx context.Context, baseDir, mode string, log Logger) error {
-	if wingetExe, err := exec.LookPath("winget.exe"); err == nil {
+func installWebView2(ctx context.Context, baseDir, mode string, log Logger, onProgress archive.ProgressCallback) error {
+	showVer, showURL, _ := resolveWingetPackageShow(ctx, webview2WingetID)
+	if showVer != "" {
+		cleanVer := normalizeToolVer(showVer)
+		if cleanVer != "" {
+			toolLatestMu.Lock()
+			toolLatestCache["webview2"] = cleanVer
+			toolLatestMu.Unlock()
+		}
+		if mode == "update" {
+			cur := detectWebView2()
+			if cur.Installed && cur.RawVersion != "" && cleanVer != "" && pathmgr.CompareSemver(cur.RawVersion, cleanVer) >= 0 {
+				log("OK",
+					fmt.Sprintf("WebView2 Runtime v%s is already up to date (latest Winget Evergreen: v%s).", cur.RawVersion, cleanVer),
+					fmt.Sprintf("WebView2 Runtime v%s sudah versi terbaru (Winget Evergreen terbaru: v%s).", cur.RawVersion, cleanVer),
+				)
+				return nil
+			}
+		}
+	}
+
+	if wingetExe := findWingetExe(); wingetExe != "" {
 		subCmd := "install"
-		args := []string{"install", "--id", webview2WingetID, "-e", "--accept-source-agreements", "--accept-package-agreements"}
+		args := []string{"install", "--id", webview2WingetID, "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements"}
 		if mode == "update" {
 			subCmd = "upgrade"
-			args = []string{"upgrade", "--id", webview2WingetID, "-e", "--accept-source-agreements", "--accept-package-agreements"}
+			args = []string{"upgrade", "--id", webview2WingetID, "-e", "--silent", "--accept-source-agreements", "--accept-package-agreements"}
 		} else if mode == "fix" {
-			args = []string{"install", "--id", webview2WingetID, "-e", "--force", "--accept-source-agreements", "--accept-package-agreements"}
+			args = []string{"install", "--id", webview2WingetID, "-e", "--force", "--silent", "--accept-source-agreements", "--accept-package-agreements"}
 		}
 		log("CMD",
 			fmt.Sprintf("winget %s Microsoft.EdgeWebView2Runtime...", subCmd),
@@ -556,15 +645,136 @@ func installWebView2(ctx context.Context, baseDir, mode string, log Logger) erro
 	}
 
 	cacheDir := filepath.Join(baseDir, "_cache")
-	installer, err := archive.DownloadFile(ctx, webview2BootstrapURL, cacheDir, nil, func(lvl, en, id string) { log(lvl, en, id) })
+	// Remove any legacy extensionless "p" artifact created by earlier fwlink downloads without redirect resolution.
+	_ = os.Remove(filepath.Join(cacheDir, "p"))
+
+	dlURL := webview2BootstrapURL
+	dlFile := "MicrosoftEdgeWebview2Setup.exe"
+	dlMsgEN := "Downloading official MicrosoftEdgeWebview2Setup.exe (~1.8 MB bootstrapper)..."
+	dlMsgID := "Mengunduh installer resmi MicrosoftEdgeWebview2Setup.exe (~1.8 MB bootstrapper)..."
+	// Prefer the standalone offline installer when updating/repairing so EdgeUpdate doesn't reject with 0x80040828 ("already installed").
+	if showURL != "" && (mode == "update" || mode == "fix" || detectWebView2().Installed) {
+		dlURL = showURL
+		dlFile = "MicrosoftEdgeWebView2RuntimeInstallerX64.exe"
+		dlMsgEN = "Downloading official standalone WebView2 Runtime x64 installer..."
+		dlMsgID = "Mengunduh installer standalone resmi WebView2 Runtime x64..."
+	}
+
+	log("INFO", dlMsgEN, dlMsgID)
+	installer, err := archive.DownloadFileNamed(ctx, dlURL, cacheDir, dlFile, wrapToolProgress(onProgress, "WebView2"), func(lvl, en, id string) { log(lvl, en, id) })
 	if err != nil {
 		return err
+	}
+	if onProgress != nil {
+		onProgress(archive.ProgressEvent{Stage: "install", Percent: -1, Detail: "Installing WebView2 Runtime..."})
 	}
 	log("CMD",
 		fmt.Sprintf("Running %s /silent /install", installer),
 		fmt.Sprintf("Menjalankan %s /silent /install", installer),
 	)
-	return runStreamingCmd(ctx, buildMergedEnv(baseDir), log, installer, "/silent", "/install")
+	err = runInstallerWithElevationFallback(ctx, buildMergedEnv(baseDir), log, installer, "/silent", "/install")
+	if err == nil {
+		return nil
+	}
+	if isExitCode(err, 3010) {
+		log("OK",
+			"WebView2 update staged; restart UniDevUI or Windows to finish applying the new runtime version.",
+			"Pembaruan WebView2 sudah disiapkan; restart UniDevUI atau Windows untuk menyelesaikan aktivasi versi baru.",
+		)
+		return nil
+	}
+	// EdgeUpdate bootstrapper returns 0x80040828 when an equal/newer Evergreen WebView2 Runtime is already present.
+	if isExitCode(err, 0x80040828, -2147219416) {
+		cur := detectWebView2()
+		if cur.Installed && mode != "fix" {
+			log("OK",
+				fmt.Sprintf("WebView2 Runtime (v%s) is already installed on this machine (EdgeUpdate returned 0x80040828).", cur.RawVersion),
+				fmt.Sprintf("WebView2 Runtime (v%s) sudah terpasang di sistem (EdgeUpdate kode 0x80040828).", cur.RawVersion),
+			)
+			return nil
+		}
+		return fmt.Errorf("EdgeUpdate reported WebView2 Runtime is already installed (0x80040828); repair via Windows Settings -> Installed Apps -> Microsoft Edge WebView2 Runtime -> Modify")
+	}
+	return err
+}
+
+func isExitCode(err error, targets ...int64) bool {
+	if err == nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code := int64(exitErr.ExitCode())
+		uCode := int64(uint32(exitErr.ExitCode()))
+		for _, t := range targets {
+			if code == t || uCode == t || int64(uint32(t)) == uCode {
+				return true
+			}
+		}
+	}
+	upper := strings.ToUpper(err.Error())
+	for _, t := range targets {
+		if t != 0 {
+			hexUpper := fmt.Sprintf("0X%X", uint32(t))
+			decStr := strconv.FormatInt(t, 10)
+			if strings.Contains(upper, hexUpper) || strings.Contains(upper, decStr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func wrapToolProgress(onProgress archive.ProgressCallback, detail string) archive.ProgressCallback {
+	if onProgress == nil {
+		return nil
+	}
+	return func(ev archive.ProgressEvent) {
+		ev.Detail = detail
+		onProgress(ev)
+	}
+}
+
+func runInstallerWithElevationFallback(ctx context.Context, env []string, log Logger, installer string, args ...string) error {
+	err := runStreamingCmd(ctx, env, log, installer, args...)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, windows.ERROR_ELEVATION_REQUIRED) && !strings.Contains(strings.ToLower(err.Error()), "requires elevation") {
+		return err
+	}
+	log("WARN",
+		"Installer requires Administrator elevation, launching UAC prompt...",
+		"Installer membutuhkan hak Administrator, menampilkan prompt UAC...",
+	)
+	return runElevatedViaPowerShell(ctx, installer, args...)
+}
+
+func runElevatedViaPowerShell(ctx context.Context, installer string, args ...string) error {
+	quotedArgs := make([]string, 0, len(args))
+	for _, a := range args {
+		quotedArgs = append(quotedArgs, fmt.Sprintf("'%s'", strings.ReplaceAll(a, "'", "''")))
+	}
+	argArrayLiteral := "@()"
+	if len(quotedArgs) > 0 {
+		argArrayLiteral = "@(" + strings.Join(quotedArgs, ", ") + ")"
+	}
+	psScript := fmt.Sprintf(
+		"$p = Start-Process -FilePath '%s' -ArgumentList %s -Verb RunAs -Wait -PassThru; exit $p.ExitCode",
+		strings.ReplaceAll(installer, "'", "''"),
+		argArrayLiteral,
+	)
+	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-Command", psScript)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return fmt.Errorf("%w (%s)", err, msg)
+		}
+		return err
+	}
+	return nil
 }
 
 func runStreamingCmd(ctx context.Context, env []string, log Logger, exe string, args ...string) error {
@@ -703,8 +913,8 @@ func findInEffectivePath(binName string) string {
 func runVersionCmd(exe string, args ...string) string {
 	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	out, err := cmd.Output()
-	if err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil && len(bytesTrimSpace(out)) == 0 {
 		return "Installed"
 	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
@@ -715,6 +925,24 @@ func runVersionCmd(exe string, args ...string) string {
 		}
 	}
 	return "Installed"
+}
+
+func bytesTrimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
+}
+
+func findWingetExe() string {
+	if p, err := exec.LookPath("winget.exe"); err == nil {
+		return p
+	}
+	localAppData := os.Getenv("LOCALAPPDATA")
+	if localAppData != "" {
+		cand := filepath.Join(localAppData, "Microsoft", "WindowsApps", "winget.exe")
+		if fileExists(cand) {
+			return cand
+		}
+	}
+	return ""
 }
 
 func pathContainsDir(pathEnv, dir string) bool {

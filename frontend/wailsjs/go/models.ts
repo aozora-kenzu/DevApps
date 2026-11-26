@@ -77,6 +77,10 @@ export namespace essentials {
 	    available?: string;
 	    match?: string;
 	    source?: string;
+	    installed?: boolean;
+	    installedVer?: string;
+	    hasUpdate?: boolean;
+	    matchedBy?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WingetTableRow(source);
@@ -90,6 +94,10 @@ export namespace essentials {
 	        this.available = source["available"];
 	        this.match = source["match"];
 	        this.source = source["source"];
+	        this.installed = source["installed"];
+	        this.installedVer = source["installedVer"];
+	        this.hasUpdate = source["hasUpdate"];
+	        this.matchedBy = source["matchedBy"];
 	    }
 	}
 
@@ -307,10 +315,12 @@ export namespace main {
 	    installedApps: InstalledAppView[];
 	    wingetEnv: essentials.EnvStatus;
 	    userPathList: string[];
+	    userPathEntries: pathmgr.UserPathEntry[];
 	    logs: TerminalLogEvent[];
 	    busy: boolean;
 	    lastLtsCheck: string;
 	    language: string;
+	    appVersion: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DashboardState(source);
@@ -329,10 +339,12 @@ export namespace main {
 	        this.installedApps = this.convertValues(source["installedApps"], InstalledAppView);
 	        this.wingetEnv = this.convertValues(source["wingetEnv"], essentials.EnvStatus);
 	        this.userPathList = source["userPathList"];
+	        this.userPathEntries = this.convertValues(source["userPathEntries"], pathmgr.UserPathEntry);
 	        this.logs = this.convertValues(source["logs"], TerminalLogEvent);
 	        this.busy = source["busy"];
 	        this.lastLtsCheck = source["lastLtsCheck"];
 	        this.language = source["language"];
+	        this.appVersion = source["appVersion"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -391,6 +403,28 @@ export namespace pathmgr {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.scope = source["scope"];
 	        this.fullPath = source["fullPath"];
+	    }
+	}
+	export class UserPathEntry {
+	    index: number;
+	    path: string;
+	    expanded: string;
+	    exists: boolean;
+	    managed: boolean;
+	    duplicate: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new UserPathEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.index = source["index"];
+	        this.path = source["path"];
+	        this.expanded = source["expanded"];
+	        this.exists = source["exists"];
+	        this.managed = source["managed"];
+	        this.duplicate = source["duplicate"];
 	    }
 	}
 

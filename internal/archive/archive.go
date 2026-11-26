@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,16 +39,20 @@ type Logger func(level, enMsg, idMsg string)
 // ProgressCallback receives download/extract progress updates.
 type ProgressCallback func(ProgressEvent)
 
-// DownloadFile downloads url into cacheDir and returns the local cached file path.
+// DownloadFile downloads url into cacheDir and resolves the local filename from HTTP redirect/headers when possible.
 // For PHP release URLs, it automatically falls back to /downloads/releases/archives/ on 404.
 func DownloadFile(ctx context.Context, rawURL, cacheDir string, onProgress ProgressCallback, log Logger) (string, error) {
+	return DownloadFileNamed(ctx, rawURL, cacheDir, "", onProgress, log)
+}
+
+// DownloadFileNamed downloads rawURL into cacheDir using preferredName when non-empty,
+// otherwise inferring the filename from Content-Disposition or the final redirected URL.
+func DownloadFileNamed(ctx context.Context, rawURL, cacheDir, preferredName string, onProgress ProgressCallback, log Logger) (string, error) {
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return "", fmt.Errorf("gagal membuat folder cache: %w", err)
 	}
 
-	fileName := fileNameFromURL(rawURL)
-	destPath := filepath.Join(cacheDir, fileName)
-	partPath := destPath + ".part"
+	tempPart := filepath.Join(cacheDir, fmt.Sprintf("dl-%s.part", randHex(6)))
 
 	tryURLs := []string{rawURL}
 	if strings.Contains(rawURL, "windows.php.net/downloads/releases/") &&
@@ -64,29 +69,37 @@ func DownloadFile(ctx context.Context, rawURL, cacheDir string, onProgress Progr
 				fmt.Sprintf("URL utama tidak ditemukan, mencoba fallback archive: %s", targetURL),
 			)
 		}
-		err := downloadSingle(ctx, targetURL, partPath, onProgress)
+		resolvedName, err := downloadSingle(ctx, targetURL, tempPart, onProgress)
 		if err == nil {
+			finalName := sanitizeFileName(preferredName)
+			if finalName == "" {
+				finalName = sanitizeFileName(resolvedName)
+			}
+			if finalName == "" {
+				finalName = fileNameFromURL(rawURL)
+			}
+			destPath := filepath.Join(cacheDir, finalName)
 			_ = os.Remove(destPath)
-			if err := os.Rename(partPath, destPath); err != nil {
+			if err := os.Rename(tempPart, destPath); err != nil {
 				return "", fmt.Errorf("gagal memindahkan file download: %w", err)
 			}
 			return destPath, nil
 		}
 		lastErr = err
 		if ctx.Err() != nil {
-			_ = os.Remove(partPath)
+			_ = os.Remove(tempPart)
 			return "", ctx.Err()
 		}
 	}
 
-	_ = os.Remove(partPath)
+	_ = os.Remove(tempPart)
 	return "", lastErr
 }
 
-func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress ProgressCallback) error {
+func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress ProgressCallback) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("User-Agent", "UniDevUI/1.0 (Windows Portable Package Manager)")
 
@@ -95,17 +108,19 @@ func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress 
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("download gagal: %w", err)
+		return "", fmt.Errorf("download gagal: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("server merespons HTTP %d (%s)", resp.StatusCode, resp.Status)
+		return "", fmt.Errorf("server merespons HTTP %d (%s)", resp.StatusCode, resp.Status)
 	}
+
+	resolvedName := fileNameFromResponse(resp, targetURL)
 
 	out, err := os.Create(partPath)
 	if err != nil {
-		return fmt.Errorf("gagal membuat file sementara: %w", err)
+		return "", fmt.Errorf("gagal membuat file sementara: %w", err)
 	}
 	defer out.Close()
 
@@ -149,7 +164,7 @@ func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress 
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := out.Write(buf[:n]); wErr != nil {
-				return fmt.Errorf("gagal menulis file download: %w", wErr)
+				return "", fmt.Errorf("gagal menulis file download: %w", wErr)
 			}
 			downloaded += int64(n)
 			emit(false)
@@ -158,12 +173,12 @@ func downloadSingle(ctx context.Context, targetURL, partPath string, onProgress 
 			break
 		}
 		if readErr != nil {
-			return fmt.Errorf("koneksi terputus saat download: %w", readErr)
+			return "", fmt.Errorf("koneksi terputus saat download: %w", readErr)
 		}
 	}
 
 	emit(true)
-	return nil
+	return resolvedName, nil
 }
 
 // InstallPackage extracts or prepares archivePath into baseDir\appID\version.
@@ -634,6 +649,36 @@ func fileNameFromURL(rawURL string) string {
 	base := filepath.Base(trimmed)
 	if base == "" || base == "." || base == "/" {
 		return "package.archive"
+	}
+	return base
+}
+
+func fileNameFromResponse(resp *http.Response, fallbackURL string) string {
+	if resp != nil {
+		if cd := strings.TrimSpace(resp.Header.Get("Content-Disposition")); cd != "" {
+			if _, params, err := mime.ParseMediaType(cd); err == nil {
+				if name := sanitizeFileName(params["filename"]); name != "" {
+					return name
+				}
+			}
+		}
+		if resp.Request != nil && resp.Request.URL != nil {
+			if name := sanitizeFileName(fileNameFromURL(resp.Request.URL.String())); name != "" {
+				return name
+			}
+		}
+	}
+	return fileNameFromURL(fallbackURL)
+}
+
+func sanitizeFileName(name string) string {
+	trimmed := strings.TrimSpace(name)
+	if trimmed == "" {
+		return ""
+	}
+	base := filepath.Base(trimmed)
+	if base == "" || base == "." || base == ".." || base == "/" || base == `\` {
+		return ""
 	}
 	return base
 }

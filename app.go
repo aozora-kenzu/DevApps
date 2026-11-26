@@ -22,6 +22,9 @@ import (
 	"github.com/aozora-kenzu/UniDevUI/internal/tools"
 )
 
+// AppVersion is the current UniDevUI desktop application version.
+const AppVersion = "1.0.0"
+
 // VersionView describes one package version plus local install and PATH status.
 type VersionView struct {
 	Version      string `json:"version"`
@@ -55,7 +58,7 @@ type PackageView struct {
 	Versions        []VersionView         `json:"versions"`
 }
 
-// EssentialView describes one Windows Clean Install app plus detected Winget state.
+// EssentialView describes one Windows Apps entry plus detected Winget state.
 type EssentialView struct {
 	ID            string   `json:"id"`
 	Name          string   `json:"name"`
@@ -116,12 +119,14 @@ type DashboardState struct {
 	Tools              []tools.ToolStatus   `json:"tools"`
 	Essentials         []EssentialView      `json:"essentials"`
 	InstalledApps      []InstalledAppView   `json:"installedApps"`
-	WingetEnv          essentials.EnvStatus `json:"wingetEnv"`
-	UserPathList       []string             `json:"userPathList"`
-	Logs               []TerminalLogEvent   `json:"logs"`
-	Busy               bool                 `json:"busy"`
-	LastLTSCheck       string               `json:"lastLtsCheck"`
-	Language           string               `json:"language"`
+	WingetEnv          essentials.EnvStatus    `json:"wingetEnv"`
+	UserPathList       []string                `json:"userPathList"`
+	UserPathEntries    []pathmgr.UserPathEntry `json:"userPathEntries"`
+	Logs               []TerminalLogEvent      `json:"logs"`
+	Busy               bool                    `json:"busy"`
+	LastLTSCheck       string                  `json:"lastLtsCheck"`
+	Language           string                  `json:"language"`
+	AppVersion         string                  `json:"appVersion"`
 }
 
 // TerminalLogEvent represents a single line emitted to the UI terminal drawer.
@@ -373,8 +378,8 @@ func (a *App) startConfigWatcher(pkgConfPath, essConfPath, ignConfPath string) {
 							)
 						} else {
 							a.emitBiLog("OK",
-								fmt.Sprintf("Clean Install list reloaded (%d apps).", len(apps)),
-								fmt.Sprintf("Daftar Clean Install berhasil dimuat (%d aplikasi).", len(apps)),
+								fmt.Sprintf("Windows Apps list reloaded (%d apps).", len(apps)),
+								fmt.Sprintf("Daftar Windows Apps berhasil dimuat (%d aplikasi).", len(apps)),
 							)
 						}
 					}
@@ -444,8 +449,8 @@ func (a *App) ReloadConfig() (DashboardState, error) {
 		return st, err
 	}
 	a.emitBiLog("OK",
-		fmt.Sprintf("Configuration reloaded (%d runtime packages, %d CLI/SDK tools, %d Clean Install apps).", len(st.Packages), len(st.Tools), len(st.Essentials)),
-		fmt.Sprintf("Konfigurasi berhasil dimuat (%d paket runtime, %d CLI/SDK tool, %d aplikasi Clean Install).", len(st.Packages), len(st.Tools), len(st.Essentials)),
+		fmt.Sprintf("Configuration reloaded (%d runtime packages, %d CLI/SDK tools, %d Windows Apps).", len(st.Packages), len(st.Tools), len(st.Essentials)),
+		fmt.Sprintf("Konfigurasi berhasil dimuat (%d paket runtime, %d CLI/SDK tool, %d Windows Apps).", len(st.Packages), len(st.Tools), len(st.Essentials)),
 	)
 	return a.GetDashboardState()
 }
@@ -498,6 +503,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 	}
 
 	userPaths, _, _ := pathmgr.GetUserPathEntries()
+	userPathEntries, _ := pathmgr.InspectUserPathEntries(baseDir)
 
 	views := make([]PackageView, 0, len(pkgs))
 	for _, p := range pkgs {
@@ -674,10 +680,12 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		InstalledApps:      installedApps,
 		WingetEnv:          wEnv,
 		UserPathList:       userPaths,
+		UserPathEntries:    userPathEntries,
 		Logs:               logsCopy,
 		Busy:               busy,
 		LastLTSCheck:       lastCheck,
 		Language:           a.getLanguage(),
+		AppVersion:         AppVersion,
 	}, nil
 }
 
@@ -847,8 +855,8 @@ func (a *App) RefreshWingetStatus() (DashboardState, error) {
 		return st, err
 	}
 	a.emitBiLog("OK",
-		fmt.Sprintf("Winget status refreshed (%d Clean Install apps checked).", len(st.Essentials)),
-		fmt.Sprintf("Status Winget diperbarui (%d aplikasi Clean Install diperiksa).", len(st.Essentials)),
+		fmt.Sprintf("Winget status refreshed (%d Windows Apps checked).", len(st.Essentials)),
+		fmt.Sprintf("Status Winget diperbarui (%d Windows Apps diperiksa).", len(st.Essentials)),
 	)
 	return st, nil
 }
@@ -1069,11 +1077,28 @@ func (a *App) SearchWingetApps(query string) ([]essentials.WingetTableRow, error
 		a.emitBiLog("ERROR", err.Error(), err.Error())
 		return nil, err
 	}
+
+	a.essMu.RLock()
+	cacheDone := a.wingetCacheDone
+	a.essMu.RUnlock()
+	if !cacheDone {
+		a.refreshWingetCache(ctx)
+	}
+
+	var ignoredMap map[string]essentials.IgnoredApp
+	if ignConfPath, err := essentials.EnsureIgnoredConfig(a.appDir); err == nil {
+		_, ignoredMap, _ = essentials.ParseIgnoredFile(ignConfPath)
+	}
+
+	a.essMu.RLock()
+	annotated := essentials.AnnotateSearchRowsInstalled(rows, a.wingetByID, a.regApps, a.wingetRows, ignoredMap)
+	a.essMu.RUnlock()
+
 	a.emitBiLog("INFO",
-		fmt.Sprintf("Winget search %q returned %d results.", query, len(rows)),
-		fmt.Sprintf("Pencarian Winget %q menemukan %d hasil.", query, len(rows)),
+		fmt.Sprintf("Winget search %q returned %d results.", query, len(annotated)),
+		fmt.Sprintf("Pencarian Winget %q menemukan %d hasil.", query, len(annotated)),
 	)
-	return rows, nil
+	return annotated, nil
 }
 
 // GetWingetPackageDetails returns live `winget show` metadata and a resolved icon data URI.
@@ -1373,7 +1398,7 @@ func (a *App) UnignoreInstalledApp(id string) (DashboardState, error) {
 	return a.GetDashboardState()
 }
 
-// PinWingetApp appends a Winget search result to essentials.conf so it persists in the Clean Install list.
+// PinWingetApp appends a Winget search result to essentials.conf so it persists in the Windows Apps list.
 func (a *App) PinWingetApp(name, wingetID, source, category string) (DashboardState, error) {
 	essConfPath, err := essentials.EnsureConfig(a.appDir)
 	if err != nil {
@@ -1714,6 +1739,100 @@ func (a *App) AddCustomDirToPath(dir string) (DashboardState, error) {
 		)
 	}
 	return a.GetDashboardState()
+}
+
+// PickAndAddUserPathDir lets the user browse for a folder and append it to User PATH (HKCU).
+func (a *App) PickAndAddUserPathDir() (DashboardState, error) {
+	title := "Select Folder to Add to User PATH"
+	if a.getLanguage() == "id" {
+		title = "Pilih Folder untuk Ditambahkan ke User PATH"
+	}
+	selected, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:            title,
+		DefaultDirectory: a.getBaseDir(),
+	})
+	if err != nil || strings.TrimSpace(selected) == "" {
+		return a.GetDashboardState()
+	}
+	return a.AddCustomDirToPath(selected)
+}
+
+// MoveUserPathEntry reorders an entry inside User PATH (delta < 0 moves up, delta > 0 moves down).
+func (a *App) MoveUserPathEntry(index, delta int) (DashboardState, error) {
+	if _, err := pathmgr.MoveUserPathEntry(index, delta); err != nil {
+		a.emitBiLog("ERROR", err.Error(), err.Error())
+		return DashboardState{}, err
+	}
+	dirWordEN, dirWordID := "up", "ke atas"
+	if delta > 0 {
+		dirWordEN, dirWordID = "down", "ke bawah"
+	}
+	a.emitBiLog("OK",
+		fmt.Sprintf("Moved User PATH entry #%d %s (priority updated).", index+1, dirWordEN),
+		fmt.Sprintf("Urutan User PATH #%d digeser %s (prioritas diperbarui).", index+1, dirWordID),
+	)
+	return a.GetDashboardState()
+}
+
+// RemoveUserPathEntry removes one entry from HKCU\Environment\Path.
+func (a *App) RemoveUserPathEntry(index int, entryPath string) (DashboardState, error) {
+	if _, err := pathmgr.RemoveUserPathEntry(index, entryPath); err != nil {
+		a.emitBiLog("ERROR", err.Error(), err.Error())
+		return DashboardState{}, err
+	}
+	a.emitBiLog("OK",
+		fmt.Sprintf("Removed from User PATH (HKCU\\Environment): %s", entryPath),
+		fmt.Sprintf("Dihapus dari User PATH (HKCU\\Environment): %s", entryPath),
+	)
+	return a.GetDashboardState()
+}
+
+// CleanInvalidUserPath removes missing directories and duplicate entries from HKCU\Environment\Path.
+func (a *App) CleanInvalidUserPath() (DashboardState, error) {
+	removed, _, err := pathmgr.CleanUserPathEntries()
+	if err != nil {
+		a.emitBiLog("ERROR", err.Error(), err.Error())
+		return DashboardState{}, err
+	}
+	if len(removed) == 0 {
+		a.emitBiLog("INFO",
+			"No missing folders or duplicates found in User PATH.",
+			"Tidak ada folder rusak atau duplikat di User PATH.",
+		)
+	} else {
+		a.emitBiLog("OK",
+			fmt.Sprintf("Cleaned %d missing/duplicate User PATH entries.", len(removed)),
+			fmt.Sprintf("Membersihkan %d entri User PATH yang rusak/duplikat.", len(removed)),
+		)
+	}
+	return a.GetDashboardState()
+}
+
+// OpenUserPathDir opens a User PATH entry directory in Windows Explorer.
+func (a *App) OpenUserPathDir(rawDir string) error {
+	target := pathmgr.ExpandPathEntry(rawDir)
+	if !dirExists(target) {
+		return a.biErr(
+			fmt.Sprintf("folder not found on disk: %s", target),
+			fmt.Sprintf("folder tidak ditemukan di disk: %s", target),
+		)
+	}
+	cmdStr := fmt.Sprintf("explorer.exe %s", target)
+	a.emitBiLog("CMD", cmdStr, cmdStr)
+	return exec.Command("explorer.exe", target).Start()
+}
+
+// RefreshUserPath reloads User PATH entries without waiting for remote version feeds.
+func (a *App) RefreshUserPath() (DashboardState, error) {
+	st, err := a.GetDashboardState()
+	if err != nil {
+		return st, err
+	}
+	a.emitBiLog("OK",
+		fmt.Sprintf("User PATH reloaded (%d entries).", len(st.UserPathList)),
+		fmt.Sprintf("User PATH dimuat ulang (%d entri).", len(st.UserPathList)),
+	)
+	return st, nil
 }
 
 // OpenPackagesConf launches Notepad to edit packages.conf next to UniDevUI.exe.
@@ -2281,7 +2400,7 @@ func (a *App) InstallCLITool(toolID, mode string) error {
 			fmt.Sprintf("Menjalankan %s tool %s...", mode, toolID),
 		)
 		runtime.EventsEmit(a.ctx, "task:progress", archive.ProgressEvent{Stage: "install", Percent: -1, Detail: fmt.Sprintf("%s %s...", mode, toolID)})
-		if err := tools.InstallTool(ctx, toolID, mode, baseDir, a.emitBiLog); err != nil {
+		if err := tools.InstallToolWithProgress(ctx, toolID, mode, baseDir, a.emitBiLog, a.emitProgress); err != nil {
 			a.emitBiLog("ERROR",
 				fmt.Sprintf("Tool %s (%s) failed: %v", toolID, mode, err),
 				fmt.Sprintf("Proses %s pada tool %s gagal: %v", mode, toolID, err),

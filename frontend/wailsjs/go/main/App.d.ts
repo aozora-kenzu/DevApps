@@ -9,6 +9,8 @@ export function AddToPath(arg1:string,arg2:string):Promise<main.DashboardState>;
 
 export function CancelActiveTask():Promise<boolean>;
 
+export function CleanInvalidUserPath():Promise<main.DashboardState>;
+
 export function DeleteInstalledVersion(arg1:string,arg2:string):Promise<main.DashboardState>;
 
 export function DownloadAndInstall(arg1:string,arg2:string):Promise<void>;
@@ -29,6 +31,8 @@ export function InstallWingetByID(arg1:string,arg2:string,arg3:string):Promise<v
 
 export function InstallWingetCLI():Promise<void>;
 
+export function MoveUserPathEntry(arg1:number,arg2:number):Promise<main.DashboardState>;
+
 export function OpenAppPathFolder():Promise<void>;
 
 export function OpenEssentialsConf():Promise<void>;
@@ -39,15 +43,23 @@ export function OpenIgnoredConf():Promise<void>;
 
 export function OpenPackagesConf():Promise<void>;
 
+export function OpenUserPathDir(arg1:string):Promise<void>;
+
+export function PickAndAddUserPathDir():Promise<main.DashboardState>;
+
 export function PickOutputDirectory():Promise<string>;
 
 export function PinWingetApp(arg1:string,arg2:string,arg3:string,arg4:string):Promise<main.DashboardState>;
+
+export function RefreshUserPath():Promise<main.DashboardState>;
 
 export function RefreshWingetStatus():Promise<main.DashboardState>;
 
 export function ReloadConfig():Promise<main.DashboardState>;
 
 export function RemoveFromPath(arg1:string):Promise<main.DashboardState>;
+
+export function RemoveUserPathEntry(arg1:number,arg2:string):Promise<main.DashboardState>;
 
 export function RestartAsAdmin():Promise<void>;
 

@@ -5,6 +5,8 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -151,5 +153,30 @@ func TestInstallPythonTarGzCreatesPipWrapper(t *testing.T) {
 	}
 	if !fileExists(filepath.Join(installDir, "pip.bat")) {
 		t.Fatal("expected pip.bat wrapper at install root")
+	}
+}
+
+func TestDownloadFileResolvesRedirectFilename(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/fwlink/p/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/cdn/MicrosoftEdgeWebview2Setup.exe", http.StatusFound)
+	})
+	mux.HandleFunc("/cdn/MicrosoftEdgeWebview2Setup.exe", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("MZ-stub-installer"))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cacheDir := filepath.Join(t.TempDir(), "_cache")
+	got, err := DownloadFile(context.Background(), srv.URL+"/fwlink/p/?LinkId=2124703", cacheDir, nil, nil)
+	if err != nil {
+		t.Fatalf("DownloadFile failed: %v", err)
+	}
+	if filepath.Base(got) != "MicrosoftEdgeWebview2Setup.exe" {
+		t.Fatalf("expected resolved filename MicrosoftEdgeWebview2Setup.exe, got %q", filepath.Base(got))
+	}
+	if !fileExists(got) {
+		t.Fatalf("expected downloaded file at %s", got)
 	}
 }

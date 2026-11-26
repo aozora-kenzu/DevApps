@@ -34,12 +34,16 @@ type EnvStatus struct {
 
 // WingetTableRow represents one row parsed from winget list/upgrade/search output.
 type WingetTableRow struct {
-	Name      string `json:"name"`
-	ID        string `json:"id"`
-	Version   string `json:"version"`
-	Available string `json:"available,omitempty"`
-	Match     string `json:"match,omitempty"`
-	Source    string `json:"source,omitempty"`
+	Name         string `json:"name"`
+	ID           string `json:"id"`
+	Version      string `json:"version"`
+	Available    string `json:"available,omitempty"`
+	Match        string `json:"match,omitempty"`
+	Source       string `json:"source,omitempty"`
+	Installed    bool   `json:"installed,omitempty"`
+	InstalledVer string `json:"installedVer,omitempty"`
+	HasUpdate    bool   `json:"hasUpdate,omitempty"`
+	MatchedBy    string `json:"matchedBy,omitempty"`
 }
 
 // CheckEnvironment inspects whether winget.exe is available and whether UniDevUI is elevated (UAC Admin).
@@ -222,8 +226,29 @@ func RunEssentialAction(ctx context.Context, app EssentialApp, mode, version str
 		log("CMD", cmdLine, cmdLine)
 	}
 
+	err := execWingetAction(ctx, app.Name, app.ExpectedSize, log, progressFn, exe, args...)
+	if err == nil {
+		return nil
+	}
+	// Registry-matched packages (e.g. Firefox/Chrome/Sublime) may not link to Winget's upgrade index (0x8a150014);
+	// fall back cleanly to `winget install` so the package can still be updated in place.
+	if strings.EqualFold(mode, "update") && isWingetNoInstalledMatchErr(err) {
+		fallbackArgs := append([]string{"install"}, args[1:]...)
+		if log != nil {
+			log("WARN",
+				fmt.Sprintf("%s not linked in Winget upgrade index (0x8a150014), switching to winget install...", app.Name),
+				fmt.Sprintf("%s tidak tertaut di indeks upgrade Winget (0x8a150014), beralih ke winget install...", app.Name),
+			)
+			log("CMD", "winget "+strings.Join(fallbackArgs, " "), "winget "+strings.Join(fallbackArgs, " "))
+		}
+		return execWingetAction(ctx, app.Name, app.ExpectedSize, log, progressFn, exe, fallbackArgs...)
+	}
+	return err
+}
+
+func execWingetAction(ctx context.Context, name string, expectedSize int64, log Logger, progressFn archive.ProgressCallback, exe string, args ...string) error {
 	if progressFn != nil {
-		if err := runCommandWithConPTYTotal(ctx, app.Name, app.ExpectedSize, log, progressFn, exe, args...); err == nil {
+		if err := runCommandWithConPTYTotal(ctx, name, expectedSize, log, progressFn, exe, args...); err == nil {
 			return nil
 		} else if ctx.Err() != nil {
 			return err
@@ -235,6 +260,14 @@ func RunEssentialAction(ctx context.Context, app EssentialApp, mode, version str
 		}
 	}
 	return runWingetStreaming(ctx, log, exe, args...)
+}
+
+func isWingetNoInstalledMatchErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	upper := strings.ToUpper(err.Error())
+	return strings.Contains(upper, "8A150014") || strings.Contains(upper, "-1978335212") || strings.Contains(upper, "2316632084")
 }
 
 // ParseWingetTable parses fixed-width column output from `winget list` or `winget search`.
