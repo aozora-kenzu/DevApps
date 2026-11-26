@@ -321,6 +321,7 @@ export namespace main {
 	    lastLtsCheck: string;
 	    language: string;
 	    appVersion: string;
+	    appUpdate: selfupdate.UpdateInfo;
 	
 	    static createFrom(source: any = {}) {
 	        return new DashboardState(source);
@@ -345,6 +346,7 @@ export namespace main {
 	        this.lastLtsCheck = source["lastLtsCheck"];
 	        this.language = source["language"];
 	        this.appVersion = source["appVersion"];
+	        this.appUpdate = this.convertValues(source["appUpdate"], selfupdate.UpdateInfo);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -425,6 +427,47 @@ export namespace pathmgr {
 	        this.exists = source["exists"];
 	        this.managed = source["managed"];
 	        this.duplicate = source["duplicate"];
+	    }
+	}
+
+}
+
+export namespace selfupdate {
+	
+	export class UpdateInfo {
+	    currentVersion: string;
+	    latestVersion: string;
+	    tagName: string;
+	    hasUpdate: boolean;
+	    releaseUrl: string;
+	    releaseNotes: string;
+	    publishedAt: string;
+	    assetName: string;
+	    downloadUrl: string;
+	    downloadSize: number;
+	    sha256: string;
+	    checkedAt: string;
+	    checkError?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.tagName = source["tagName"];
+	        this.hasUpdate = source["hasUpdate"];
+	        this.releaseUrl = source["releaseUrl"];
+	        this.releaseNotes = source["releaseNotes"];
+	        this.publishedAt = source["publishedAt"];
+	        this.assetName = source["assetName"];
+	        this.downloadUrl = source["downloadUrl"];
+	        this.downloadSize = source["downloadSize"];
+	        this.sha256 = source["sha256"];
+	        this.checkedAt = source["checkedAt"];
+	        this.checkError = source["checkError"];
 	    }
 	}
 

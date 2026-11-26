@@ -19,11 +19,12 @@ import (
 	"github.com/aozora-kenzu/UniDevUI/internal/essentials"
 	"github.com/aozora-kenzu/UniDevUI/internal/lts"
 	"github.com/aozora-kenzu/UniDevUI/internal/pathmgr"
+	"github.com/aozora-kenzu/UniDevUI/internal/selfupdate"
 	"github.com/aozora-kenzu/UniDevUI/internal/tools"
 )
 
-// AppVersion is the current UniDevUI desktop application version.
-const AppVersion = "1.0.1"
+// AppVersion is the current UniDevUI desktop application version (overridable via -ldflags for testing).
+var AppVersion = "1.0.2"
 
 // VersionView describes one package version plus local install and PATH status.
 type VersionView struct {
@@ -127,6 +128,7 @@ type DashboardState struct {
 	LastLTSCheck       string                  `json:"lastLtsCheck"`
 	Language           string                  `json:"language"`
 	AppVersion         string                  `json:"appVersion"`
+	AppUpdate          selfupdate.UpdateInfo   `json:"appUpdate"`
 }
 
 // TerminalLogEvent represents a single line emitted to the UI terminal drawer.
@@ -171,6 +173,10 @@ type App struct {
 	sizeMu        sync.RWMutex
 	urlSizes      map[string]int64
 	sizeCachePath string
+
+	appUpdateMu   sync.RWMutex
+	appUpdateInfo selfupdate.UpdateInfo
+	appUpdatePath string
 }
 
 // NewApp creates a new App instance. Config files live in AppDir (beside UniDevUI.exe);
@@ -186,9 +192,13 @@ func NewApp() *App {
 		lang = "en"
 	}
 	sizeCachePath := ""
+	appUpdatePath := ""
 	if sp, spErr := config.SettingsPath(); spErr == nil && sp != "" {
-		sizeCachePath = filepath.Join(filepath.Dir(sp), "size_cache.json")
+		cfgDir := filepath.Dir(sp)
+		sizeCachePath = filepath.Join(cfgDir, "size_cache.json")
+		appUpdatePath = filepath.Join(cfgDir, "app_update_cache.json")
 	}
+	cachedUpdate, _ := selfupdate.LoadCachedInfo(appUpdatePath, AppVersion, selfupdate.DefaultCheckCooldown)
 	return &App{
 		appDir:           config.AppDir(),
 		baseDir:          base,
@@ -200,6 +210,8 @@ func NewApp() *App {
 		fallbackRepoVers: make(map[string]string),
 		urlSizes:         lts.LoadSizeCache(sizeCachePath),
 		sizeCachePath:    sizeCachePath,
+		appUpdateInfo:    cachedUpdate,
+		appUpdatePath:    appUpdatePath,
 	}
 }
 
@@ -220,6 +232,9 @@ func (a *App) getLanguage() string {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	if exePath, eErr := a.resolvedExePath(); eErr == nil && exePath != "" {
+		go selfupdate.CleanupStaleArtifacts(exePath)
+	}
 	baseDir := a.getBaseDir()
 	pkgConf, pkgErr := config.EnsureConfig(a.appDir)
 	essConf, essErr := essentials.EnsureConfig(a.appDir)
@@ -268,6 +283,17 @@ func (a *App) startup(ctx context.Context) {
 		if a.refreshEssentialSizes(bgCtx) {
 			runtime.EventsEmit(a.ctx, "state:refresh")
 		}
+	}()
+
+	go func() {
+		info := a.refreshAppUpdate(ctx, false)
+		if info.HasUpdate {
+			a.emitBiLog("INFO",
+				fmt.Sprintf("UniDevUI update available: v%s -> v%s (open About to update)", info.CurrentVersion, info.LatestVersion),
+				fmt.Sprintf("Update UniDevUI tersedia: v%s -> v%s (buka Tentang untuk memperbarui)", info.CurrentVersion, info.LatestVersion),
+			)
+		}
+		runtime.EventsEmit(a.ctx, "state:refresh")
 	}()
 }
 
@@ -668,6 +694,13 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		}
 	}
 
+	a.appUpdateMu.RLock()
+	appUpdateCopy := a.appUpdateInfo
+	a.appUpdateMu.RUnlock()
+	if appUpdateCopy.CurrentVersion == "" {
+		appUpdateCopy.CurrentVersion = selfupdate.NormalizeVersion(AppVersion)
+	}
+
 	return DashboardState{
 		AppDir:             a.appDir,
 		BaseDir:            baseDir,
@@ -686,6 +719,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		LastLTSCheck:       lastCheck,
 		Language:           a.getLanguage(),
 		AppVersion:         AppVersion,
+		AppUpdate:          appUpdateCopy,
 	}, nil
 }
 
@@ -1137,6 +1171,178 @@ func (a *App) OpenExternalURL(rawURL string) error {
 		return a.biErr("invalid external URL", "URL eksternal tidak valid")
 	}
 	runtime.BrowserOpenURL(a.ctx, trimmed)
+	return nil
+}
+
+func (a *App) resolvedExePath() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if resolved, rErr := filepath.EvalSymlinks(exe); rErr == nil && strings.TrimSpace(resolved) != "" {
+		return resolved, nil
+	}
+	return exe, nil
+}
+
+func (a *App) refreshAppUpdate(ctx context.Context, force bool) selfupdate.UpdateInfo {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	a.appUpdateMu.RLock()
+	cachePath := a.appUpdatePath
+	prev := a.appUpdateInfo
+	a.appUpdateMu.RUnlock()
+
+	if !force {
+		if cached, fresh := selfupdate.LoadCachedInfo(cachePath, AppVersion, selfupdate.DefaultCheckCooldown); fresh {
+			a.appUpdateMu.Lock()
+			a.appUpdateInfo = cached
+			a.appUpdateMu.Unlock()
+			return cached
+		}
+	}
+
+	info, err := selfupdate.CheckLatestRelease(ctx, AppVersion)
+	if err != nil {
+		if prev.LatestVersion != "" && !force {
+			prev.CurrentVersion = selfupdate.NormalizeVersion(AppVersion)
+			prev.HasUpdate = selfupdate.IsNewerVersion(prev.LatestVersion, AppVersion)
+			info = prev
+		} else {
+			info.CurrentVersion = selfupdate.NormalizeVersion(AppVersion)
+			info.CheckError = err.Error()
+		}
+	} else {
+		_ = selfupdate.SaveCachedInfo(cachePath, info)
+	}
+
+	a.appUpdateMu.Lock()
+	a.appUpdateInfo = info
+	a.appUpdateMu.Unlock()
+	return info
+}
+
+// CheckAppUpdate queries GitHub Releases for a newer UniDevUI release without using the startup cache cooldown.
+func (a *App) CheckAppUpdate() (DashboardState, error) {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	info := a.refreshAppUpdate(ctx, true)
+	if info.CheckError != "" {
+		a.emitBiLog("WARN",
+			fmt.Sprintf("Failed checking UniDevUI release update: %s", info.CheckError),
+			fmt.Sprintf("Gagal memeriksa pembaruan UniDevUI: %s", info.CheckError),
+		)
+	} else if info.HasUpdate {
+		a.emitBiLog("OK",
+			fmt.Sprintf("UniDevUI update found: v%s -> v%s (%s)", info.CurrentVersion, info.LatestVersion, info.AssetName),
+			fmt.Sprintf("Update UniDevUI ditemukan: v%s -> v%s (%s)", info.CurrentVersion, info.LatestVersion, info.AssetName),
+		)
+	} else {
+		a.emitBiLog("OK",
+			fmt.Sprintf("UniDevUI v%s is up to date.", info.CurrentVersion),
+			fmt.Sprintf("UniDevUI v%s sudah versi terbaru.", info.CurrentVersion),
+		)
+	}
+	return a.GetDashboardState()
+}
+
+// ApplyAppUpdate downloads the latest UniDevUI.exe release, verifies SHA-256, swaps binaries, and restarts the app.
+func (a *App) ApplyAppUpdate() error {
+	exePath, err := a.resolvedExePath()
+	if err != nil || strings.TrimSpace(exePath) == "" {
+		return a.biErr("cannot locate running executable path", "tidak dapat menemukan path executable yang sedang berjalan")
+	}
+
+	ctx, err := a.beginTask()
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		defer a.endTask()
+		a.emitBiLog("INFO",
+			fmt.Sprintf("Checking UniDevUI release metadata for update (current v%s)...", selfupdate.NormalizeVersion(AppVersion)),
+			fmt.Sprintf("Memeriksa metadata rilis UniDevUI untuk update (saat ini v%s)...", selfupdate.NormalizeVersion(AppVersion)),
+		)
+
+		info := a.refreshAppUpdate(ctx, true)
+		if info.CheckError != "" {
+			a.emitBiLog("ERROR",
+				fmt.Sprintf("App update check failed: %s", info.CheckError),
+				fmt.Sprintf("Pemeriksaan update aplikasi gagal: %s", info.CheckError),
+			)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "state:refresh")
+			}
+			return
+		}
+		if !info.HasUpdate {
+			a.emitBiLog("OK",
+				fmt.Sprintf("UniDevUI v%s is already up to date.", info.CurrentVersion),
+				fmt.Sprintf("UniDevUI v%s sudah menggunakan versi terbaru.", info.CurrentVersion),
+			)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "state:refresh")
+			}
+			return
+		}
+		if strings.TrimSpace(info.DownloadURL) == "" {
+			a.emitBiLog("WARN",
+				fmt.Sprintf("Release v%s does not expose a UniDevUI.exe asset; please download from %s", info.LatestVersion, info.ReleaseURL),
+				fmt.Sprintf("Rilis v%s tidak memiliki aset UniDevUI.exe; silakan unduh dari %s", info.LatestVersion, info.ReleaseURL),
+			)
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "state:refresh")
+			}
+			return
+		}
+
+		a.emitBiLog("INFO",
+			fmt.Sprintf("Downloading UniDevUI v%s (%s)...", info.LatestVersion, info.DownloadURL),
+			fmt.Sprintf("Mengunduh UniDevUI v%s (%s)...", info.LatestVersion, info.DownloadURL),
+		)
+
+		backupPath, swapErr := selfupdate.DownloadVerifyAndSwap(ctx, info, exePath, a.emitProgress, a.emitBiLog)
+		if swapErr != nil {
+			a.emitBiLog("ERROR",
+				fmt.Sprintf("UniDevUI self-update failed: %v", swapErr),
+				fmt.Sprintf("Gagal memperbarui UniDevUI: %v", swapErr),
+			)
+			a.emitProgress(archive.ProgressEvent{Stage: "idle", Percent: 0})
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "state:refresh")
+			}
+			return
+		}
+
+		a.emitBiLog("OK",
+			fmt.Sprintf("Verified SHA-256 and updated binary to v%s (backup: %s). Restarting...", info.LatestVersion, filepath.Base(backupPath)),
+			fmt.Sprintf("SHA-256 terverifikasi dan biner diperbarui ke v%s (cadangan: %s). Memulai ulang...", info.LatestVersion, filepath.Base(backupPath)),
+		)
+
+		if startErr := selfupdate.StartDetachedProcess(exePath); startErr != nil {
+			_ = os.Rename(backupPath, exePath)
+			a.emitBiLog("ERROR",
+				fmt.Sprintf("Failed restarting updated executable (rolled back): %v", startErr),
+				fmt.Sprintf("Gagal menjalankan ulang executable baru (dikembalikan ke semula): %v", startErr),
+			)
+			a.emitProgress(archive.ProgressEvent{Stage: "idle", Percent: 0})
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "state:refresh")
+			}
+			return
+		}
+
+		time.Sleep(250 * time.Millisecond)
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "task:busy", false)
+			runtime.Quit(a.ctx)
+		}
+	}()
+
 	return nil
 }
 
@@ -2141,6 +2347,18 @@ func (a *App) UpdateLTSLinks() error {
 		go func() {
 			defer wg.Done()
 			a.refreshWingetCache(ctx)
+		}()
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			info := a.refreshAppUpdate(ctx, true)
+			if info.HasUpdate {
+				a.emitBiLog("OK",
+					fmt.Sprintf("[UniDevUI] update available: v%s -> v%s (open About to update)", info.CurrentVersion, info.LatestVersion),
+					fmt.Sprintf("[UniDevUI] update tersedia: v%s -> v%s (buka Tentang untuk memperbarui)", info.CurrentVersion, info.LatestVersion),
+				)
+			}
 		}()
 
 		wg.Wait()

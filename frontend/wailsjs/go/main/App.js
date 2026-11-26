@@ -10,8 +10,16 @@ export function AddToPath(arg1, arg2) {
   return window['go']['main']['App']['AddToPath'](arg1, arg2);
 }
 
+export function ApplyAppUpdate() {
+  return window['go']['main']['App']['ApplyAppUpdate']();
+}
+
 export function CancelActiveTask() {
   return window['go']['main']['App']['CancelActiveTask']();
+}
+
+export function CheckAppUpdate() {
+  return window['go']['main']['App']['CheckAppUpdate']();
 }
 
 export function CleanInvalidUserPath() {

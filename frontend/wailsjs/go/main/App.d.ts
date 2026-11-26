@@ -7,7 +7,11 @@ export function AddCustomDirToPath(arg1:string):Promise<main.DashboardState>;
 
 export function AddToPath(arg1:string,arg2:string):Promise<main.DashboardState>;
 
+export function ApplyAppUpdate():Promise<void>;
+
 export function CancelActiveTask():Promise<boolean>;
+
+export function CheckAppUpdate():Promise<main.DashboardState>;
 
 export function CleanInvalidUserPath():Promise<main.DashboardState>;
 

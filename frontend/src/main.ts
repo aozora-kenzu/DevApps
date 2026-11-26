@@ -2,7 +2,9 @@ import './style.css';
 import {
     AddCustomDirToPath,
     AddToPath,
+    ApplyAppUpdate,
     CancelActiveTask,
+    CheckAppUpdate,
     CleanInvalidUserPath,
     DeleteInstalledVersion,
     DownloadAndInstall,
@@ -116,6 +118,7 @@ let terminalCollapsed = false;
 let busy = false;
 let showPathModal = false;
 let showAboutModal = false;
+let checkingAppUpdate = false;
 let outputDirDraft = '';
 
 let scrollByViewKey: Record<string, number> = {};
@@ -1060,7 +1063,7 @@ function renderWingetSearchView(): string {
 function renderAboutModal(s: main.DashboardState): string {
     if (!showAboutModal) return '';
     const t = getT(currentLang());
-    const ver = s.appVersion || '1.0.1';
+    const ver = s.appVersion || '1.0.2';
 
     const linkBtn = (url: string): string =>
         `<button class="detail-link-btn" data-open-url="${escapeHtml(url)}">${escapeHtml(url)}</button>`;
@@ -1082,6 +1085,45 @@ function renderAboutModal(s: main.DashboardState): string {
         .map(([k, val]) => `<div class="detail-key">${escapeHtml(k)}</div><div class="detail-val">${val}</div>`)
         .join('');
 
+    const upd = s.appUpdate;
+    const hasUpd = Boolean(upd?.hasUpdate);
+    const notesText = (upd?.releaseNotes || '').trim();
+    const updStatusLine = checkingAppUpdate
+        ? t.aboutUpdateChecking
+        : hasUpd
+          ? t.aboutUpdateAvailableMsg(upd.currentVersion || ver, upd.latestVersion)
+          : t.aboutUpdateUpToDate(ver);
+
+    const updActionsHtml = hasUpd
+        ? `
+            ${
+                upd?.downloadUrl
+                    ? `<button class="btn btn-primary btn-sm" id="btn-app-self-update" ${busy || checkingAppUpdate ? 'disabled' : ''}>${escapeHtml(t.aboutUpdateInstallBtn)}${upd.downloadSize > 0 ? ` (${escapeHtml(formatBytes(upd.downloadSize))})` : ''}</button>`
+                    : `<span class="about-update-meta">${escapeHtml(t.aboutUpdateNoAssetNote)}</span>`
+            }
+            ${
+                upd?.releaseUrl
+                    ? `<button class="btn btn-sm" data-open-url="${escapeHtml(upd.releaseUrl)}">${escapeHtml(t.aboutUpdateOpenReleaseBtn)}</button>`
+                    : ''
+            }
+            <button class="btn btn-sm" id="btn-app-check-update" ${busy || checkingAppUpdate ? 'disabled' : ''}>${escapeHtml(t.aboutUpdateCheckBtn)}</button>
+        `
+        : `<button class="btn btn-sm" id="btn-app-check-update" ${busy || checkingAppUpdate ? 'disabled' : ''}>${escapeHtml(t.aboutUpdateCheckBtn)}</button>`;
+
+    const updateSectionHtml = `
+        <div class="about-update-box ${hasUpd ? 'about-update-warn' : ''}">
+            <div class="about-update-row">
+                <div>
+                    <div class="about-update-heading">${escapeHtml(t.aboutUpdateTitle)}</div>
+                    <div class="about-update-meta">${escapeHtml(updStatusLine)}${upd?.checkedAt && !checkingAppUpdate ? ` · ${escapeHtml(t.aboutUpdateLastChecked(upd.checkedAt))}` : ''}</div>
+                </div>
+                <div class="controls-left">${updActionsHtml}</div>
+            </div>
+            ${!checkingAppUpdate && upd?.checkError ? `<div class="conflict-banner">${escapeHtml(upd.checkError)}</div>` : ''}
+            ${hasUpd && notesText ? `<div class="detail-desc-box about-notes">${escapeHtml(notesText)}</div>` : ''}
+        </div>
+    `;
+
     return `
         <div class="modal-backdrop" id="about-modal-backdrop">
             <div class="modal-card detail-modal-card">
@@ -1100,6 +1142,7 @@ function renderAboutModal(s: main.DashboardState): string {
                             <div class="about-subtitle">${escapeHtml(t.aboutSubtitle)}</div>
                         </div>
                     </div>
+                    ${updateSectionHtml}
                     <div class="detail-desc-box">${escapeHtml(t.aboutDesc)}</div>
                     <div class="detail-grid">${gridHtml}</div>
                 </div>
@@ -2014,7 +2057,11 @@ function render(skipScrollCapture = false): void {
                     <button class="lang-btn ${lang === 'id' ? 'active' : ''}" data-lang="id">ID</button>
                 </div>
                 ${topbarRightActions}
-                <button class="btn" id="btn-about" title="${escapeHtml(t.btnAboutTooltip)}">ⓘ ${escapeHtml(t.btnAbout)}</button>
+                <button
+                    class="${state.appUpdate?.hasUpdate ? 'btn btn-update-ready' : 'btn'}"
+                    id="btn-about"
+                    title="${escapeHtml(state.appUpdate?.hasUpdate ? t.aboutUpdateAvailableTip(state.appUpdate.latestVersion) : t.btnAboutTooltip)}"
+                >ⓘ ${escapeHtml(t.btnAbout)}${state.appUpdate?.hasUpdate ? ` <span class="update-pill">${escapeHtml(t.aboutUpdateAvailableBadge(state.appUpdate.latestVersion))}</span>` : ''}</button>
             </div>
         </header>
 
@@ -2265,6 +2312,27 @@ function bindEventListeners(): void {
     document.getElementById('btn-about-close-footer')?.addEventListener('click', closeAboutModal);
     document.getElementById('about-modal-backdrop')?.addEventListener('click', (ev) => {
         if (ev.target === ev.currentTarget) closeAboutModal();
+    });
+
+    document.getElementById('btn-app-check-update')?.addEventListener('click', () => {
+        if (checkingAppUpdate) return;
+        checkingAppUpdate = true;
+        render(true);
+        CheckAppUpdate()
+            .then((nextState) => {
+                state = nextState;
+            })
+            .catch((e) => reportErr(e))
+            .finally(() => {
+                checkingAppUpdate = false;
+                render(true);
+            });
+    });
+
+    document.getElementById('btn-app-self-update')?.addEventListener('click', () => {
+        showAboutModal = false;
+        render(true);
+        ApplyAppUpdate().catch((e) => reportErr(e));
     });
 
     const dirInputEl = document.getElementById('output-dir-input') as HTMLInputElement | null;

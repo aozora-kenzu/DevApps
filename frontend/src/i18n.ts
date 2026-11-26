@@ -225,6 +225,18 @@ export interface Translations {
     aboutOutputDirLabel: string;
     aboutOpenRepo: string;
     aboutOpenTelegram: string;
+    aboutUpdateAvailableBadge: (ver: string) => string;
+    aboutUpdateAvailableTip: (ver: string) => string;
+    aboutUpdateTitle: string;
+    aboutUpdateChecking: string;
+    aboutUpdateUpToDate: (ver: string) => string;
+    aboutUpdateAvailableMsg: (cur: string, latest: string) => string;
+    aboutUpdateCheckBtn: string;
+    aboutUpdateInstallBtn: string;
+    aboutUpdateOpenReleaseBtn: string;
+    aboutUpdateNoAssetNote: string;
+    aboutUpdateNotesLabel: string;
+    aboutUpdateLastChecked: (ts: string) => string;
 }
 
 const en: Translations = {
@@ -452,6 +464,18 @@ const en: Translations = {
     aboutOutputDirLabel: 'Output Folder',
     aboutOpenRepo: 'Open GitHub',
     aboutOpenTelegram: 'Contact Telegram',
+    aboutUpdateAvailableBadge: (ver) => `v${ver}`,
+    aboutUpdateAvailableTip: (ver) => `UniDevUI v${ver} is available! Click to view & update.`,
+    aboutUpdateTitle: 'Application Update',
+    aboutUpdateChecking: 'Checking GitHub Releases for updates...',
+    aboutUpdateUpToDate: (ver) => `UniDevUI v${ver} is up to date`,
+    aboutUpdateAvailableMsg: (cur, latest) => `New release available: v${cur} → v${latest}`,
+    aboutUpdateCheckBtn: 'Check App Update',
+    aboutUpdateInstallBtn: 'Update & Restart',
+    aboutUpdateOpenReleaseBtn: 'Release Page',
+    aboutUpdateNoAssetNote: 'Installer asset not found in release; please download from Release Page.',
+    aboutUpdateNotesLabel: 'Release Notes',
+    aboutUpdateLastChecked: (ts) => `Last checked: ${ts}`,
 };
 
 const id: Translations = {
@@ -679,6 +703,18 @@ const id: Translations = {
     aboutOutputDirLabel: 'Folder Output',
     aboutOpenRepo: 'Buka GitHub',
     aboutOpenTelegram: 'Hubungi Telegram',
+    aboutUpdateAvailableBadge: (ver) => `v${ver}`,
+    aboutUpdateAvailableTip: (ver) => `UniDevUI v${ver} tersedia! Klik untuk melihat & update.`,
+    aboutUpdateTitle: 'Pembaruan Aplikasi',
+    aboutUpdateChecking: 'Memeriksa rilis terbaru di GitHub...',
+    aboutUpdateUpToDate: (ver) => `UniDevUI v${ver} sudah versi terbaru`,
+    aboutUpdateAvailableMsg: (cur, latest) => `Versi baru tersedia: v${cur} → v${latest}`,
+    aboutUpdateCheckBtn: 'Cek Update Aplikasi',
+    aboutUpdateInstallBtn: 'Update & Restart',
+    aboutUpdateOpenReleaseBtn: 'Halaman Rilis',
+    aboutUpdateNoAssetNote: 'Aset installer tidak ditemukan pada rilis; silakan unduh lewat Halaman Rilis.',
+    aboutUpdateNotesLabel: 'Catatan Rilis',
+    aboutUpdateLastChecked: (ts) => `Terakhir dicek: ${ts}`,
 };
 
 export function getT(lang: string | undefined): Translations {
