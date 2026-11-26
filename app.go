@@ -23,7 +23,7 @@ import (
 )
 
 // AppVersion is the current UniDevUI desktop application version.
-const AppVersion = "1.0.0"
+const AppVersion = "1.0.1"
 
 // VersionView describes one package version plus local install and PATH status.
 type VersionView struct {

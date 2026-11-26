@@ -1060,7 +1060,7 @@ function renderWingetSearchView(): string {
 function renderAboutModal(s: main.DashboardState): string {
     if (!showAboutModal) return '';
     const t = getT(currentLang());
-    const ver = s.appVersion || '1.0.0';
+    const ver = s.appVersion || '1.0.1';
 
     const linkBtn = (url: string): string =>
         `<button class="detail-link-btn" data-open-url="${escapeHtml(url)}">${escapeHtml(url)}</button>`;
