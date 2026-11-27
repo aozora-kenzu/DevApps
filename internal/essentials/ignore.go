@@ -12,13 +12,15 @@ import (
 	"time"
 )
 
-// IgnoredApp represents an application excluded from updates & active Installed lists.
+// IgnoredApp represents an application excluded from updates & active Installed lists (or skipping one specific version / paused temporarily).
 type IgnoredApp struct {
-	ID           string `json:"id"` // Winget ID (or local ARP/MSIX ID)
-	Name         string `json:"name"`
-	Source       string `json:"source"`
-	WingetPinned bool   `json:"wingetPinned"`
-	Reason       string `json:"reason"`
+	ID             string `json:"id"` // Winget ID (or local ARP/MSIX ID / pkgmgr prefixed key)
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	WingetPinned   bool   `json:"wingetPinned"`
+	SkippedVersion string `json:"skippedVersion,omitempty"` // Non-empty means only this exact available version is skipped.
+	PauseUntil     string `json:"pauseUntil,omitempty"`     // Non-empty YYYY-MM-DD pauses update alerts until this date.
+	Reason         string `json:"reason"`
 }
 
 // IgnoredConfigPath returns ignored_updates.conf inside appDir (alongside UniDevUI.exe).
@@ -112,6 +114,10 @@ func ParseIgnoredFile(confPath string) ([]IgnoredApp, map[string]IgnoredApp, err
 			current.Source = strings.ToLower(v)
 		case "winget_pinned":
 			current.WingetPinned = strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes")
+		case "skipped_version":
+			current.SkippedVersion = strings.TrimSpace(v)
+		case "pause_until":
+			current.PauseUntil = strings.TrimSpace(v)
 		case "reason":
 			current.Reason = v
 		}
@@ -139,7 +145,11 @@ func AddIgnoredApp(confPath string, entry IgnoredApp) error {
 	}
 
 	if existing, ok := byID[key]; ok {
-		if existing.WingetPinned == entry.WingetPinned && existing.Name == entry.Name {
+		if existing.WingetPinned == entry.WingetPinned &&
+			existing.Name == entry.Name &&
+			existing.SkippedVersion == entry.SkippedVersion &&
+			existing.PauseUntil == entry.PauseUntil &&
+			existing.Reason == entry.Reason {
 			return nil
 		}
 		for i := range list {
@@ -196,12 +206,57 @@ func writeIgnoredFile(confPath string, list []IgnoredApp) error {
 		} else {
 			b.WriteString("winget_pinned = false\r\n")
 		}
+		if item.SkippedVersion != "" {
+			b.WriteString(fmt.Sprintf("skipped_version = %s\r\n", item.SkippedVersion))
+		}
+		if item.PauseUntil != "" {
+			b.WriteString(fmt.Sprintf("pause_until = %s\r\n", item.PauseUntil))
+		}
 		if item.Reason != "" {
 			b.WriteString(fmt.Sprintf("reason = %s\r\n", item.Reason))
 		}
 	}
 	b.WriteString("\r\n")
 	return os.WriteFile(confPath, []byte(b.String()), 0o644)
+}
+
+// IsPausedActive returns true when PauseUntil (YYYY-MM-DD) has not yet expired relative to now.
+func IsPausedActive(entry IgnoredApp, now time.Time) bool {
+	raw := strings.TrimSpace(entry.PauseUntil)
+	if raw == "" {
+		return false
+	}
+	until, err := time.ParseInLocation("2006-01-02", raw, now.Location())
+	if err != nil {
+		return false
+	}
+	// Inclusive through end of pause_until local date.
+	endOfDay := time.Date(until.Year(), until.Month(), until.Day(), 23, 59, 59, 0, now.Location())
+	return !now.After(endOfDay)
+}
+
+// EvaluateIgnoredPolicy determines whether an app is fully ignored or only temporarily suppressing/skipping updates.
+func EvaluateIgnoredPolicy(entry IgnoredApp, hasEntry bool, availVer string) (fullIgnored, versionSkipped bool) {
+	return evaluateIgnoredPolicyAt(entry, hasEntry, availVer, time.Now())
+}
+
+func evaluateIgnoredPolicyAt(entry IgnoredApp, hasEntry bool, availVer string, now time.Time) (fullIgnored, versionSkipped bool) {
+	if !hasEntry {
+		return false, false
+	}
+	skipVer := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(entry.SkippedVersion)), "v")
+	pauseRaw := strings.TrimSpace(entry.PauseUntil)
+	if skipVer == "" && pauseRaw == "" {
+		return true, false
+	}
+	if IsPausedActive(entry, now) {
+		return false, true
+	}
+	curAvail := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(availVer)), "v")
+	if skipVer != "" && curAvail != "" && curAvail == skipVer {
+		return false, true
+	}
+	return false, false
 }
 
 // IsManageableWingetID returns true when an ID represents a real repository package rather than a synthetic ARP/MSIX key.

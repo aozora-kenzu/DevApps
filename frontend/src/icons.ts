@@ -62,6 +62,17 @@ const svgByKey: Record<string, string> = {
     vsbuildtools: `<svg viewBox="0 0 32 32" fill="none"><path d="M23 4l5 2.5v19L23 28l-10.5-9.5-5.5 4.2-2.5-1.2V10.5L7 9.3l5.5 4.2L23 4z" fill="#854CC7"/><path d="M23 11.2L16.5 16l6.5 4.8v-9.6z" fill="#C084FC"/></svg>`,
     webview2: `<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="12" fill="#0078D4"/><path d="M7 18c2.5-5 10-7.5 17-3.5-2-4.5-6.5-6.5-11-5.5C9.5 10 7 14 7 18z" fill="#38BDF8"/><circle cx="18" cy="19" r="5" fill="#10B981" opacity=".9"/></svg>`,
 
+    // --- Tab 1: Package Managers ---
+    scoop: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="4" width="24" height="24" rx="6" fill="#1E293B" stroke="#38BDF8" stroke-width="1.5"/><path d="M10 19a6 6 0 0012 0v-2H10v2z" fill="#38BDF8"/><path d="M16 9v8" stroke="#BAE6FD" stroke-width="2.4" stroke-linecap="round"/><circle cx="16" cy="8.5" r="2.2" fill="#BAE6FD"/></svg>`,
+    choco: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="4" width="24" height="24" rx="5" fill="#80B5E3"/><rect x="7" y="7" width="18" height="18" rx="3" fill="#5C3D2E"/><path d="M7 15.5h18M16 7v18" stroke="#8D6E63" stroke-width="1.6"/></svg>`,
+    npm: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="8" width="24" height="16" rx="3" fill="#CB3837"/><path d="M8 12h4v8h-2v-6h-1v6H8v-8zm5 0h5v7h-2v-5h-1v5h-2v-7zm6 0h5v8h-1.5v-6h-1v6h-1v-6h-1.5v-2z" fill="#fff"/></svg>`,
+    pnpm: `<svg viewBox="0 0 32 32" fill="none"><rect x="5" y="5" width="6.5" height="6.5" rx="1" fill="#F9AD00"/><rect x="12.8" y="5" width="6.5" height="6.5" rx="1" fill="#F9AD00"/><rect x="20.5" y="5" width="6.5" height="6.5" rx="1" fill="#F9AD00"/><rect x="12.8" y="12.8" width="6.5" height="6.5" rx="1" fill="#4E4E4E"/><rect x="20.5" y="12.8" width="6.5" height="6.5" rx="1" fill="#F9AD00"/><rect x="5" y="20.5" width="6.5" height="6.5" rx="1" fill="#4E4E4E"/><rect x="12.8" y="20.5" width="6.5" height="6.5" rx="1" fill="#4E4E4E"/><rect x="20.5" y="20.5" width="6.5" height="6.5" rx="1" fill="#4E4E4E"/></svg>`,
+    bun: `<svg viewBox="0 0 32 32" fill="none"><ellipse cx="16" cy="17" rx="11.5" ry="9" fill="#FBF0DF"/><ellipse cx="16" cy="18.5" rx="10" ry="6.5" fill="#F4D3A1" opacity=".45"/><circle cx="11.5" cy="15.5" r="1.4" fill="#1E293B"/><circle cx="20.5" cy="15.5" r="1.4" fill="#1E293B"/><path d="M14.2 18.2c.8 1 2.8 1 3.6 0" stroke="#E11D48" stroke-width="1.6" stroke-linecap="round"/></svg>`,
+    uv: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="4" width="24" height="24" rx="6" fill="#261230" stroke="#DE5FE9" stroke-width="1.5"/><text x="16" y="20" text-anchor="middle" fill="#DE5FE9" font-size="12" font-weight="900" font-family="monospace">uv</text></svg>`,
+    pip: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="4" width="24" height="24" rx="6" fill="#1E3A5F" stroke="#FBBF24" stroke-width="1.4"/><text x="16" y="19.5" text-anchor="middle" fill="#FDE047" font-size="10.5" font-weight="900" font-family="monospace">pip</text></svg>`,
+    cargo: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="5" width="24" height="22" rx="5" fill="#7C2D12" stroke="#FB923C" stroke-width="1.5"/><path d="M9 12h14v8H9z" fill="#C2410C"/><path d="M16 12v8M9 16h14" stroke="#FED7AA" stroke-width="1.4"/></svg>`,
+    psgallery: `<svg viewBox="0 0 32 32" fill="none"><rect x="4" y="5" width="24" height="22" rx="5" fill="#0F172A" stroke="#38BDF8" stroke-width="1.5"/><path d="M9.5 12l5 4-5.5 4M15.5 20h6" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+
     // --- Tab 2: Curated 27 Windows Apps ---
     firefox: `<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="11" fill="#0060DF"/><path d="M25 10c-2-3.5-6-5-9.5-4.5 2.5 1 4 3 3.5 5.5-2-1-4.5-.5-6 1.5C11 9.5 9 7 9.5 4.5 5.5 7 4 12.5 5.5 17.5 7.5 24 14.5 27.5 21 25.5c5.5-1.8 8.5-8 4-15.5z" fill="#FF7139"/><circle cx="16" cy="16" r="4.5" fill="#80C8FF" opacity=".7"/></svg>`,
     chrome: `<svg viewBox="0 0 32 32" fill="none"><circle cx="16" cy="16" r="12" fill="#FBBC05"/><path d="M16 4a12 12 0 0110.4 6H16l-5.2 9L5.6 10A12 12 0 0116 4z" fill="#EA4335"/><path d="M5.6 10l5.2 9 4 7A12 12 0 015.6 10z" fill="#34A853"/><circle cx="16" cy="16" r="5.5" fill="#fff"/><circle cx="16" cy="16" r="4.1" fill="#4285F4"/></svg>`,
@@ -192,7 +203,7 @@ function escapeAttr(val: string): string {
 export function renderAppIcon(
     primaryKey: string,
     displayName: string,
-    opts?: { wingetId?: string; dataUrl?: string; sizeClass?: 'sm' | 'md' | 'lg' },
+    opts?: { wingetId?: string; dataUrl?: string; iconUrl?: string; sizeClass?: 'sm' | 'md' | 'lg' },
 ): string {
     const sizeCls = opts?.sizeClass ? `app-icon-${opts.sizeClass}` : 'app-icon-md';
     const builtin =
@@ -204,11 +215,12 @@ export function renderAppIcon(
 
     const monogram = escapeAttr(makeMonogram(displayName || primaryKey));
     const bg = monogramColor(opts?.wingetId || primaryKey || displayName);
+    const imgSrc = opts?.dataUrl || opts?.iconUrl || '';
 
-    if (opts?.dataUrl) {
+    if (imgSrc) {
         return `
             <div class="app-icon ${sizeCls}" style="--mono-bg:${bg}" aria-hidden="true">
-                <img class="app-icon-img" src="${escapeAttr(opts.dataUrl)}" alt="" />
+                <img class="app-icon-img" src="${escapeAttr(imgSrc)}" loading="lazy" alt="" />
                 <span class="app-icon-mono" style="display:none">${monogram}</span>
             </div>
         `;

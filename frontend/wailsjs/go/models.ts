@@ -1,3 +1,36 @@
+export namespace config {
+	
+	export class AppSettings {
+	    baseDir: string;
+	    language: string;
+	    closeAction: string;
+	    autoStart: boolean;
+	    startInTray: boolean;
+	    autoCheckUpdates: boolean;
+	    autoCheckIntervalHours: number;
+	    delayStartupScan: boolean;
+	    lastCheckUnix?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.baseDir = source["baseDir"];
+	        this.language = source["language"];
+	        this.closeAction = source["closeAction"];
+	        this.autoStart = source["autoStart"];
+	        this.startInTray = source["startInTray"];
+	        this.autoCheckUpdates = source["autoCheckUpdates"];
+	        this.autoCheckIntervalHours = source["autoCheckIntervalHours"];
+	        this.delayStartupScan = source["delayStartupScan"];
+	        this.lastCheckUnix = source["lastCheckUnix"];
+	    }
+	}
+
+}
+
 export namespace essentials {
 	
 	export class EnvStatus {
@@ -19,6 +52,7 @@ export namespace essentials {
 	    }
 	}
 	export class PackageDetails {
+	    manager?: string;
 	    id: string;
 	    name: string;
 	    version: string;
@@ -37,8 +71,12 @@ export namespace essentials {
 	    installerUrl: string;
 	    installerSize?: number;
 	    installerSha256: string;
+	    downloadCount?: number;
+	    dependencies?: string[];
 	    tags?: string[];
+	    iconUrl?: string;
 	    iconDataUrl?: string;
+	    screenshots?: string[];
 	    loaded: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -47,6 +85,7 @@ export namespace essentials {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manager = source["manager"];
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.version = source["version"];
@@ -65,8 +104,12 @@ export namespace essentials {
 	        this.installerUrl = source["installerUrl"];
 	        this.installerSize = source["installerSize"];
 	        this.installerSha256 = source["installerSha256"];
+	        this.downloadCount = source["downloadCount"];
+	        this.dependencies = source["dependencies"];
 	        this.tags = source["tags"];
+	        this.iconUrl = source["iconUrl"];
 	        this.iconDataUrl = source["iconDataUrl"];
+	        this.screenshots = source["screenshots"];
 	        this.loaded = source["loaded"];
 	    }
 	}
@@ -81,6 +124,7 @@ export namespace essentials {
 	    installedVer?: string;
 	    hasUpdate?: boolean;
 	    matchedBy?: string;
+	    iconUrl?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WingetTableRow(source);
@@ -98,6 +142,7 @@ export namespace essentials {
 	        this.installedVer = source["installedVer"];
 	        this.hasUpdate = source["hasUpdate"];
 	        this.matchedBy = source["matchedBy"];
+	        this.iconUrl = source["iconUrl"];
 	    }
 	}
 
@@ -138,16 +183,24 @@ export namespace main {
 	    }
 	}
 	export class InstalledAppView {
+	    manager: string;
 	    id: string;
 	    name: string;
 	    installedVer: string;
 	    availableVer: string;
 	    source: string;
+	    description?: string;
+	    homepage?: string;
+	    iconUrl?: string;
 	    hasUpdate: boolean;
 	    ignored: boolean;
+	    skippedVersion?: string;
+	    pauseUntil?: string;
 	    wingetPinned: boolean;
 	    ignoreReason?: string;
 	    managedByWinget: boolean;
+	    canUpdate: boolean;
+	    canUninstall: boolean;
 	    pinnedCurated: boolean;
 	    curatedAppId?: string;
 	    downloadSize: number;
@@ -158,16 +211,24 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manager = source["manager"];
 	        this.id = source["id"];
 	        this.name = source["name"];
 	        this.installedVer = source["installedVer"];
 	        this.availableVer = source["availableVer"];
 	        this.source = source["source"];
+	        this.description = source["description"];
+	        this.homepage = source["homepage"];
+	        this.iconUrl = source["iconUrl"];
 	        this.hasUpdate = source["hasUpdate"];
 	        this.ignored = source["ignored"];
+	        this.skippedVersion = source["skippedVersion"];
+	        this.pauseUntil = source["pauseUntil"];
 	        this.wingetPinned = source["wingetPinned"];
 	        this.ignoreReason = source["ignoreReason"];
 	        this.managedByWinget = source["managedByWinget"];
+	        this.canUpdate = source["canUpdate"];
+	        this.canUninstall = source["canUninstall"];
 	        this.pinnedCurated = source["pinnedCurated"];
 	        this.curatedAppId = source["curatedAppId"];
 	        this.downloadSize = source["downloadSize"];
@@ -182,11 +243,14 @@ export namespace main {
 	    requiresUac: boolean;
 	    versions?: string[];
 	    description: string;
+	    iconUrl?: string;
 	    installed: boolean;
 	    installedVer: string;
 	    availableVer: string;
 	    hasUpdate: boolean;
 	    updateIgnored: boolean;
+	    skippedVersion?: string;
+	    pauseUntil?: string;
 	    versionStatus: string;
 	    matchedBy?: string;
 	    downloadSize: number;
@@ -205,11 +269,14 @@ export namespace main {
 	        this.requiresUac = source["requiresUac"];
 	        this.versions = source["versions"];
 	        this.description = source["description"];
+	        this.iconUrl = source["iconUrl"];
 	        this.installed = source["installed"];
 	        this.installedVer = source["installedVer"];
 	        this.availableVer = source["availableVer"];
 	        this.hasUpdate = source["hasUpdate"];
 	        this.updateIgnored = source["updateIgnored"];
+	        this.skippedVersion = source["skippedVersion"];
+	        this.pauseUntil = source["pauseUntil"];
 	        this.versionStatus = source["versionStatus"];
 	        this.matchedBy = source["matchedBy"];
 	        this.downloadSize = source["downloadSize"];
@@ -311,6 +378,7 @@ export namespace main {
 	    ignoredConfPath: string;
 	    packages: PackageView[];
 	    tools: tools.ToolStatus[];
+	    pkgManagers: pkgmgr.ManagerEnv[];
 	    essentials: EssentialView[];
 	    installedApps: InstalledAppView[];
 	    wingetEnv: essentials.EnvStatus;
@@ -320,6 +388,7 @@ export namespace main {
 	    busy: boolean;
 	    lastLtsCheck: string;
 	    language: string;
+	    settings: config.AppSettings;
 	    appVersion: string;
 	    appUpdate: selfupdate.UpdateInfo;
 	
@@ -336,6 +405,7 @@ export namespace main {
 	        this.ignoredConfPath = source["ignoredConfPath"];
 	        this.packages = this.convertValues(source["packages"], PackageView);
 	        this.tools = this.convertValues(source["tools"], tools.ToolStatus);
+	        this.pkgManagers = this.convertValues(source["pkgManagers"], pkgmgr.ManagerEnv);
 	        this.essentials = this.convertValues(source["essentials"], EssentialView);
 	        this.installedApps = this.convertValues(source["installedApps"], InstalledAppView);
 	        this.wingetEnv = this.convertValues(source["wingetEnv"], essentials.EnvStatus);
@@ -345,6 +415,7 @@ export namespace main {
 	        this.busy = source["busy"];
 	        this.lastLtsCheck = source["lastLtsCheck"];
 	        this.language = source["language"];
+	        this.settings = this.convertValues(source["settings"], config.AppSettings);
 	        this.appVersion = source["appVersion"];
 	        this.appUpdate = this.convertValues(source["appUpdate"], selfupdate.UpdateInfo);
 	    }
@@ -371,11 +442,35 @@ export namespace main {
 	
 	
 	
+	export class UnifiedSearchStart {
+	    token: number;
+	    query: string;
+	    total: number;
+	    sources: string[];
+	    jsMgrs?: string[];
+	    pyMgrs?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new UnifiedSearchStart(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.token = source["token"];
+	        this.query = source["query"];
+	        this.total = source["total"];
+	        this.sources = source["sources"];
+	        this.jsMgrs = source["jsMgrs"];
+	        this.pyMgrs = source["pyMgrs"];
+	    }
+	}
 	
 	export class WingetUpdateTarget {
+	    manager: string;
 	    name: string;
 	    wingetId: string;
 	    source: string;
+	    availableVer?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new WingetUpdateTarget(source);
@@ -383,9 +478,11 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manager = source["manager"];
 	        this.name = source["name"];
 	        this.wingetId = source["wingetId"];
 	        this.source = source["source"];
+	        this.availableVer = source["availableVer"];
 	    }
 	}
 
@@ -427,6 +524,65 @@ export namespace pathmgr {
 	        this.exists = source["exists"];
 	        this.managed = source["managed"];
 	        this.duplicate = source["duplicate"];
+	    }
+	}
+
+}
+
+export namespace pkgmgr {
+	
+	export class ManagerEnv {
+	    id: string;
+	    name: string;
+	    available: boolean;
+	    version: string;
+	    exePath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ManagerEnv(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.available = source["available"];
+	        this.version = source["version"];
+	        this.exePath = source["exePath"];
+	    }
+	}
+	export class PackageEntry {
+	    manager: string;
+	    id: string;
+	    name: string;
+	    version: string;
+	    availableVer?: string;
+	    source?: string;
+	    description?: string;
+	    homepage?: string;
+	    iconUrl?: string;
+	    installed?: boolean;
+	    installedVer?: string;
+	    hasUpdate?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new PackageEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.manager = source["manager"];
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.availableVer = source["availableVer"];
+	        this.source = source["source"];
+	        this.description = source["description"];
+	        this.homepage = source["homepage"];
+	        this.iconUrl = source["iconUrl"];
+	        this.installed = source["installed"];
+	        this.installedVer = source["installedVer"];
+	        this.hasUpdate = source["hasUpdate"];
 	    }
 	}
 

@@ -501,3 +501,87 @@ func TestAnnotateSearchRowsInstalled(t *testing.T) {
 		t.Fatalf("expected 7-Zip not installed, got %+v", got[3])
 	}
 }
+
+func TestSkipVersionPersistenceAndPolicy(t *testing.T) {
+	tmp := t.TempDir()
+	confPath, err := EnsureIgnoredConfig(tmp)
+	if err != nil {
+		t.Fatalf("EnsureIgnoredConfig failed: %v", err)
+	}
+
+	entry := IgnoredApp{
+		ID:             "voidtools.Everything",
+		Name:           "Everything",
+		Source:         "winget",
+		WingetPinned:   false,
+		SkippedVersion: "1.5.0",
+		Reason:         "Skipped v1.5.0 via UniDevUI",
+	}
+	if err := AddIgnoredApp(confPath, entry); err != nil {
+		t.Fatalf("AddIgnoredApp failed: %v", err)
+	}
+
+	_, byID, err := ParseIgnoredFile(confPath)
+	if err != nil {
+		t.Fatalf("ParseIgnoredFile failed: %v", err)
+	}
+	saved, ok := byID["voidtools.everything"]
+	if !ok || saved.SkippedVersion != "1.5.0" || saved.WingetPinned {
+		t.Fatalf("expected saved skipped_version=1.5.0 without pin, got %+v", saved)
+	}
+
+	// Exact skipped version suppresses update without full-ignoring the app.
+	if full, skip := EvaluateIgnoredPolicy(saved, true, "v1.5.0"); full || !skip {
+		t.Fatalf("expected (false, true) for skipped version 1.5.0, got (%v, %v)", full, skip)
+	}
+	// Newer version clears skip condition and notifies again.
+	if full, skip := EvaluateIgnoredPolicy(saved, true, "1.6.0"); full || skip {
+		t.Fatalf("expected (false, false) for newer version 1.6.0, got (%v, %v)", full, skip)
+	}
+}
+
+func TestPauseUntilPersistenceAndExpiry(t *testing.T) {
+	dir := t.TempDir()
+	confPath := filepath.Join(dir, "ignored_updates.conf")
+	now := time.Now()
+	pauseDate := now.AddDate(0, 0, 7).Format("2006-01-02")
+
+	entry := IgnoredApp{
+		ID:           "winget:git.git",
+		Name:         "Git",
+		Source:       "winget",
+		WingetPinned: false,
+		PauseUntil:   pauseDate,
+		Reason:       "Paused updates for 7 days",
+	}
+	if err := AddIgnoredApp(confPath, entry); err != nil {
+		t.Fatalf("AddIgnoredApp pause failed: %v", err)
+	}
+
+	_, byID, err := ParseIgnoredFile(confPath)
+	if err != nil {
+		t.Fatalf("ParseIgnoredFile failed: %v", err)
+	}
+	saved, ok := byID["winget:git.git"]
+	if !ok || saved.PauseUntil != pauseDate || saved.WingetPinned {
+		t.Fatalf("expected saved pause_until=%s without pin, got %+v", pauseDate, saved)
+	}
+	if !IsPausedActive(saved, now) {
+		t.Fatalf("expected IsPausedActive=true for pause_until=%s", pauseDate)
+	}
+	if full, skip := evaluateIgnoredPolicyAt(saved, true, "2.50.0", now); full || !skip {
+		t.Fatalf("expected (false, true) while pause active, got (%v, %v)", full, skip)
+	}
+
+	expired := now.AddDate(0, 0, 10)
+	if IsPausedActive(saved, expired) {
+		t.Fatalf("expected IsPausedActive=false after expiry")
+	}
+	if full, skip := evaluateIgnoredPolicyAt(saved, true, "2.50.0", expired); full || skip {
+		t.Fatalf("expected (false, false) once pause expired, got (%v, %v)", full, skip)
+	}
+
+	if _, removedOK, err := RemoveIgnoredApp(confPath, "winget:git.git"); err != nil || !removedOK {
+		t.Fatalf("expected clean removal via RemoveIgnoredApp, removed=%v err=%v", removedOK, err)
+	}
+}

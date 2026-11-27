@@ -340,17 +340,17 @@ func AnnotateSearchRowsInstalled(
 			r.InstalledVer = match.InstalledVer
 			r.MatchedBy = DescribeDetectionSource(match.MatchedVia)
 
-			_, isIgnored := ignoredMap[strings.ToLower(strings.TrimSpace(r.ID))]
-			if !isIgnored {
-				if avail := strings.TrimSpace(match.AvailableVer); avail != "" {
-					r.Available = avail
-					r.HasUpdate = true
-				} else if !match.ExactWinget && match.InstalledVer != "" && strings.TrimSpace(r.Version) != "" {
-					if pathmgr.CompareSemver(match.InstalledVer, r.Version) < 0 {
-						r.Available = strings.TrimSpace(r.Version)
-						r.HasUpdate = true
-					}
+			ignEntry, hasIgn := ignoredMap[strings.ToLower(strings.TrimSpace(r.ID))]
+			candidateAvail := strings.TrimSpace(match.AvailableVer)
+			if candidateAvail == "" && !match.ExactWinget && match.InstalledVer != "" && strings.TrimSpace(r.Version) != "" {
+				if pathmgr.CompareSemver(match.InstalledVer, r.Version) < 0 {
+					candidateAvail = strings.TrimSpace(r.Version)
 				}
+			}
+			fullIgn, verSkipped := EvaluateIgnoredPolicy(ignEntry, hasIgn, candidateAvail)
+			if !fullIgn && !verSkipped && candidateAvail != "" {
+				r.Available = candidateAvail
+				r.HasUpdate = true
 			}
 		}
 		out[i] = r

@@ -18,12 +18,24 @@ export function CancelActiveTask() {
   return window['go']['main']['App']['CancelActiveTask']();
 }
 
+export function CancelUnifiedSearch() {
+  return window['go']['main']['App']['CancelUnifiedSearch']();
+}
+
 export function CheckAppUpdate() {
   return window['go']['main']['App']['CheckAppUpdate']();
 }
 
+export function CheckUpdatesFromTray() {
+  return window['go']['main']['App']['CheckUpdatesFromTray']();
+}
+
 export function CleanInvalidUserPath() {
   return window['go']['main']['App']['CleanInvalidUserPath']();
+}
+
+export function ConfirmCloseAction(arg1, arg2) {
+  return window['go']['main']['App']['ConfirmCloseAction'](arg1, arg2);
 }
 
 export function DeleteInstalledVersion(arg1, arg2) {
@@ -42,12 +54,20 @@ export function GetDashboardState() {
   return window['go']['main']['App']['GetDashboardState']();
 }
 
+export function GetUniversalPackageDetails(arg1, arg2, arg3) {
+  return window['go']['main']['App']['GetUniversalPackageDetails'](arg1, arg2, arg3);
+}
+
 export function GetWingetPackageDetails(arg1, arg2) {
   return window['go']['main']['App']['GetWingetPackageDetails'](arg1, arg2);
 }
 
-export function IgnoreInstalledApp(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['IgnoreInstalledApp'](arg1, arg2, arg3, arg4);
+export function HideToTray() {
+  return window['go']['main']['App']['HideToTray']();
+}
+
+export function IgnoreInstalledApp(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['IgnoreInstalledApp'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function InstallCLITool(arg1, arg2) {
@@ -64,6 +84,10 @@ export function InstallWingetByID(arg1, arg2, arg3) {
 
 export function InstallWingetCLI() {
   return window['go']['main']['App']['InstallWingetCLI']();
+}
+
+export function MinimizeWindow() {
+  return window['go']['main']['App']['MinimizeWindow']();
 }
 
 export function MoveUserPathEntry(arg1, arg2) {
@@ -94,6 +118,10 @@ export function OpenUserPathDir(arg1) {
   return window['go']['main']['App']['OpenUserPathDir'](arg1);
 }
 
+export function PauseInstalledAppUpdates(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['PauseInstalledAppUpdates'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function PickAndAddUserPathDir() {
   return window['go']['main']['App']['PickAndAddUserPathDir']();
 }
@@ -104,6 +132,10 @@ export function PickOutputDirectory() {
 
 export function PinWingetApp(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['PinWingetApp'](arg1, arg2, arg3, arg4);
+}
+
+export function QuitApp() {
+  return window['go']['main']['App']['QuitApp']();
 }
 
 export function RefreshUserPath() {
@@ -134,6 +166,18 @@ export function RunEssentialTool(arg1, arg2, arg3) {
   return window['go']['main']['App']['RunEssentialTool'](arg1, arg2, arg3);
 }
 
+export function RunPackageAction(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['RunPackageAction'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SaveAppSettings(arg1) {
+  return window['go']['main']['App']['SaveAppSettings'](arg1);
+}
+
+export function SearchPackageManager(arg1, arg2) {
+  return window['go']['main']['App']['SearchPackageManager'](arg1, arg2);
+}
+
 export function SearchWingetApps(arg1) {
   return window['go']['main']['App']['SearchWingetApps'](arg1);
 }
@@ -146,12 +190,28 @@ export function SetOutputDir(arg1) {
   return window['go']['main']['App']['SetOutputDir'](arg1);
 }
 
+export function ShowWindow() {
+  return window['go']['main']['App']['ShowWindow']();
+}
+
+export function SkipInstalledAppVersion(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SkipInstalledAppVersion'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function StartUnifiedSearch(arg1, arg2) {
+  return window['go']['main']['App']['StartUnifiedSearch'](arg1, arg2);
+}
+
 export function SyncDefaultPackages() {
   return window['go']['main']['App']['SyncDefaultPackages']();
 }
 
-export function UnignoreInstalledApp(arg1) {
-  return window['go']['main']['App']['UnignoreInstalledApp'](arg1);
+export function SyncPowerState() {
+  return window['go']['main']['App']['SyncPowerState']();
+}
+
+export function UnignoreInstalledApp(arg1, arg2) {
+  return window['go']['main']['App']['UnignoreInstalledApp'](arg1, arg2);
 }
 
 export function UpdateAllInstalled(arg1) {

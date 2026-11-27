@@ -17,8 +17,9 @@ import (
 	"github.com/aozora-kenzu/UniDevUI/internal/lts"
 )
 
-// PackageDetails holds rich metadata parsed from `winget show` plus a resolved Data-URI icon.
+// PackageDetails holds rich metadata parsed from `winget show` or package manager APIs plus resolved icons/screenshots.
 type PackageDetails struct {
+	Manager         string   `json:"manager,omitempty"`
 	ID              string   `json:"id"`
 	Name            string   `json:"name"`
 	Version         string   `json:"version"`
@@ -37,8 +38,12 @@ type PackageDetails struct {
 	InstallerURL    string   `json:"installerUrl"`
 	InstallerSize   int64    `json:"installerSize,omitempty"`
 	InstallerSHA256 string   `json:"installerSha256"`
+	DownloadCount   int64    `json:"downloadCount,omitempty"`
+	Dependencies    []string `json:"dependencies,omitempty"`
 	Tags            []string `json:"tags,omitempty"`
+	IconURL         string   `json:"iconUrl,omitempty"`
 	IconDataURL     string   `json:"iconDataUrl,omitempty"`
+	Screenshots     []string `json:"screenshots,omitempty"`
 	Loaded          bool     `json:"loaded"`
 }
 

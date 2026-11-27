@@ -4,18 +4,22 @@ import {
     AddToPath,
     ApplyAppUpdate,
     CancelActiveTask,
+    CancelUnifiedSearch,
     CheckAppUpdate,
     CleanInvalidUserPath,
+    ConfirmCloseAction,
     DeleteInstalledVersion,
     DownloadAndInstall,
     EnrichWingetSearch,
     GetDashboardState,
-    GetWingetPackageDetails,
+    GetUniversalPackageDetails,
+    HideToTray,
     IgnoreInstalledApp,
     InstallCLITool,
     InstallSelectedEssentials,
     InstallWingetByID,
     InstallWingetCLI,
+    MinimizeWindow,
     MoveUserPathEntry,
     OpenAppPathFolder,
     OpenEssentialsConf,
@@ -23,9 +27,11 @@ import {
     OpenIgnoredConf,
     OpenPackagesConf,
     OpenUserPathDir,
+    PauseInstalledAppUpdates,
     PickAndAddUserPathDir,
     PickOutputDirectory,
     PinWingetApp,
+    QuitApp,
     RefreshUserPath,
     RefreshWingetStatus,
     ReloadConfig,
@@ -33,17 +39,20 @@ import {
     RemoveUserPathEntry,
     RestartAsAdmin,
     RunEssentialTool,
-    SearchWingetApps,
+    RunPackageAction,
+    SaveAppSettings,
     SetLanguage,
-    SetOutputDir,
+    SkipInstalledAppVersion,
+    StartUnifiedSearch,
     SyncDefaultPackages,
+    SyncPowerState,
     UnignoreInstalledApp,
     UpdateAllInstalled,
     UpdateLTSLinks,
     UpdateWingetByID,
 } from '../wailsjs/go/main/App';
-import { essentials, main, tools } from '../wailsjs/go/models';
-import { EventsOn } from '../wailsjs/runtime/runtime';
+import { config, essentials, main, pkgmgr, tools } from '../wailsjs/go/models';
+import { EventsOn, Quit, WindowIsMaximised, WindowMinimise, WindowToggleMaximise } from '../wailsjs/runtime/runtime';
 import {
     getT,
     Lang,
@@ -55,7 +64,7 @@ import {
 import { getCuratedMeta, renderAppIcon } from './icons';
 
 type PrimaryTab = 'runtimes' | 'essentials';
-type RuntimeTabKey = 'all' | 'core' | 'stack' | 'tools' | 'path';
+type RuntimeTabKey = 'all' | 'core' | 'stack' | 'pkgmgr' | 'tools' | 'path';
 type EssentialTabKey =
     | 'all'
     | 'browsers'
@@ -67,6 +76,35 @@ type EssentialTabKey =
     | 'installed'
     | 'search';
 type InstalledFilterKey = 'updates' | 'all' | 'ignored';
+type ManagerKey =
+    | 'winget'
+    | 'scoop'
+    | 'choco'
+    | 'npm'
+    | 'pnpm'
+    | 'bun'
+    | 'uv'
+    | 'pip'
+    | 'cargo'
+    | 'dotnet'
+    | 'psgallery';
+type InstalledMgrFilterKey = 'all' | ManagerKey;
+type SearchFilterKey = 'all' | 'winget' | 'msstore' | 'scoop' | 'choco' | 'js' | 'py' | 'cargo' | 'dotnet' | 'psgallery';
+
+interface UnifiedSearchChunkEvent {
+    token: number;
+    query: string;
+    sourceGroup: string;
+    jsMgrs?: string[];
+    pyMgrs?: string[];
+    wingetRows?: essentials.WingetTableRow[];
+    pkgRows?: pkgmgr.PackageEntry[];
+    error?: string;
+    completed: number;
+    total: number;
+    pending?: string[];
+    done: boolean;
+}
 
 interface ProgressState {
     stage: string;
@@ -78,12 +116,14 @@ interface ProgressState {
 }
 
 interface DetailTarget {
+    manager?: string;
     appId?: string;
     wingetId: string;
     name: string;
     source: string;
     version?: string;
     fallbackDesc?: string;
+    iconUrl?: string;
     isEssentialItem?: boolean;
 }
 
@@ -92,11 +132,20 @@ let primaryTab: PrimaryTab = 'runtimes';
 let runtimeTab: RuntimeTabKey = 'all';
 let essentialTab: EssentialTabKey = 'all';
 let installedFilter: InstalledFilterKey = 'updates';
+let installedMgrFilter: InstalledMgrFilterKey = 'all';
 
 let runtimeSearchQuery = '';
 let essentialSearchQuery = '';
 let wingetCatalogQuery = '';
+let searchResultFilter: SearchFilterKey = 'all';
 let wingetSearchResults: essentials.WingetTableRow[] = [];
+let extraSearchByGroup: Record<string, pkgmgr.PackageEntry[]> = {};
+let unifiedJSMgrs: ManagerKey[] = [];
+let unifiedPyMgrs: ManagerKey[] = [];
+let selectedSearchJSMgrByPkg: Record<string, ManagerKey> = {};
+let unifiedSearchPending: string[] = [];
+let unifiedSearchTotal = 0;
+let unifiedSearchDone = false;
 let wingetSearching = false;
 let wingetEnriching = false;
 let wingetSearchExecuted = false;
@@ -116,10 +165,13 @@ let logs: main.TerminalLogEvent[] = [];
 let initialLogsLoaded = false;
 let terminalCollapsed = false;
 let busy = false;
-let showPathModal = false;
+let showSettingsModal = false;
+let settingsDraft: config.AppSettings | null = null;
+let showCloseConfirmModal = false;
+let closeConfirmRemember = false;
 let showAboutModal = false;
 let checkingAppUpdate = false;
-let outputDirDraft = '';
+let windowMaximized = false;
 
 let scrollByViewKey: Record<string, number> = {};
 let sidebarSummaryScrollTop = 0;
@@ -205,16 +257,30 @@ function matchesSearch(text: string, query: string): boolean {
     return text.toLowerCase().includes(query.trim().toLowerCase());
 }
 
-function detailKey(wingetId: string, source?: string): string {
-    return `${wingetId.trim().toLowerCase()}|${(source || 'winget').trim().toLowerCase()}`;
+function detailKey(wingetId: string, source?: string, manager?: string): string {
+    const mgr = (manager || 'winget').trim().toLowerCase();
+    const idLower = wingetId.trim().toLowerCase();
+    const srcLower = (source || mgr).trim().toLowerCase();
+    return mgr === 'winget' ? `${idLower}|${srcLower}` : `${mgr}|${idLower}|${srcLower}`;
 }
 
-function getCachedDetails(wingetId: string, source?: string): essentials.PackageDetails | undefined {
+function getCachedDetails(wingetId: string, source?: string, manager?: string): essentials.PackageDetails | undefined {
+    const mgr = (manager || 'winget').trim().toLowerCase();
+    if (mgr !== 'winget') {
+        return wingetDetailsByKey[detailKey(wingetId, source, mgr)];
+    }
     return (
-        wingetDetailsByKey[detailKey(wingetId, source)] ||
-        wingetDetailsByKey[detailKey(wingetId, 'winget')] ||
-        wingetDetailsByKey[detailKey(wingetId, 'msstore')]
+        wingetDetailsByKey[detailKey(wingetId, source, 'winget')] ||
+        wingetDetailsByKey[detailKey(wingetId, 'winget', 'winget')] ||
+        wingetDetailsByKey[detailKey(wingetId, 'msstore', 'winget')]
     );
+}
+
+function formatDownloadCount(n: number): string {
+    if (!n || n <= 0) return '';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return `${n}`;
 }
 
 function shortDomain(rawUrl?: string): string {
@@ -535,6 +601,22 @@ function renderToolSizePill(tool: tools.ToolStatus): string {
     if (tool.id === 'tauri') {
         return `<span class="size-pill size-pill-warn" title="${escapeHtml(t.toolSizeCargoHeavyTip)}">${escapeHtml(t.toolSizeCargoHeavy)}</span>`;
     }
+    const pkgMgrPills: Record<string, [string, string]> = {
+        scoop: ['User-space (PowerShell)', 'size-pill-muted'],
+        choco: ['Admin (UAC)', 'size-pill-warn'],
+        npm: ['npm install -g', 'size-pill-muted'],
+        pnpm: ['npm / ~40 MB (.exe)', 'size-pill-muted'],
+        bun: ['↓ ~40 MB (.zip)', ''],
+        uv: ['↓ ~16 MB (.zip)', ''],
+        pip: ['pip install -U', 'size-pill-muted'],
+        cargo: ['cargo install', 'size-pill-muted'],
+        dotnet: ['dotnet tool -g', 'size-pill-muted'],
+        psgallery: ['Install-PSResource', 'size-pill-muted'],
+    };
+    const pillSpec = pkgMgrPills[tool.id];
+    if (pillSpec) {
+        return `<span class="size-pill ${pillSpec[1]}">${escapeHtml(pillSpec[0])}</span>`;
+    }
     return '';
 }
 
@@ -589,6 +671,9 @@ function renderToolCard(tool: tools.ToolStatus): string {
             </button>
         `;
 
+    const badgeLabel =
+        tool.category === 'sdk' ? t.badgeSDK : tool.category === 'pkgmgr' ? t.badgePkgMgr : t.badgeCLI;
+
     return `
         <div class="card ${tool.installed ? 'card-active' : ''}">
             <div class="card-top">
@@ -597,7 +682,7 @@ function renderToolCard(tool: tools.ToolStatus): string {
                     <div class="card-info">
                         <div class="card-title-row">
                             <span class="card-name">${escapeHtml(tool.name)}</span>
-                            <span class="badge badge-cat">${escapeHtml(tool.category === 'sdk' ? t.badgeSDK : t.badgeCLI)}</span>
+                            <span class="badge badge-cat">${escapeHtml(badgeLabel)}</span>
                             ${req ? `<span class="card-id">${escapeHtml(req)}</span>` : ''}
                         </div>
                         <div class="card-desc">${escapeHtml(desc)}</div>
@@ -696,8 +781,32 @@ function renderEssentialCard(item: main.EssentialView): string {
                 ${escapeHtml(t.essBtnRestore)}
             </button>
         `
-        : item.hasUpdate
+        : item.pauseUntil
           ? `
+            <button
+                class="btn btn-sm btn-restore"
+                data-action="winget-unignore"
+                data-wid="${escapeHtml(item.wingetId)}"
+                ${busy ? 'disabled' : ''}
+                title="${escapeHtml(t.pkgBtnResumeUpdatesTip)}"
+            >
+                ${escapeHtml(t.pkgBtnResumeUpdates)}
+            </button>
+        `
+          : item.skippedVersion
+            ? `
+            <button
+                class="btn btn-sm btn-restore"
+                data-action="winget-unignore"
+                data-wid="${escapeHtml(item.wingetId)}"
+                ${busy ? 'disabled' : ''}
+                title="${escapeHtml(t.pkgBtnClearSkipTip)}"
+            >
+                ${escapeHtml(t.pkgBtnClearSkip)}
+            </button>
+        `
+            : item.hasUpdate
+              ? `
             <button
                 class="btn btn-sm"
                 data-action="winget-ignore"
@@ -710,7 +819,7 @@ function renderEssentialCard(item: main.EssentialView): string {
                 ${escapeHtml(t.essBtnIgnore)}
             </button>
         `
-          : '';
+              : '';
 
     const actionButtonsHtml = !item.installed
         ? `
@@ -760,7 +869,7 @@ function renderEssentialCard(item: main.EssentialView): string {
                         ${isChecked ? 'checked' : ''}
                         ${busy ? 'disabled' : ''}
                     />
-                    ${renderAppIcon(item.id, item.name, { wingetId: item.wingetId, dataUrl: det?.iconDataUrl })}
+                    ${renderAppIcon(item.id, item.name, { wingetId: item.wingetId, dataUrl: det?.iconDataUrl, iconUrl: item.iconUrl || det?.iconUrl })}
                     <div class="card-info">
                         <div class="card-title-row">
                             <span class="card-name">${escapeHtml(item.name)}</span>
@@ -801,11 +910,15 @@ function renderEssentialCard(item: main.EssentialView): string {
                         ${
                             item.updateIgnored
                                 ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
-                                : item.hasUpdate
-                                  ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(item.availableVer))}</span>`
-                                  : item.versionStatus === 'ahead'
-                                    ? `<span class="badge badge-cat">${escapeHtml(t.essStatusNewerThanWinget)}</span>`
-                                    : `<span class="badge badge-active">${escapeHtml(item.installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
+                                : item.pauseUntil
+                                  ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgePausedUntil(item.pauseUntil))}</span>`
+                                  : item.skippedVersion
+                                    ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgeSkipped(item.skippedVersion))}</span>`
+                                    : item.hasUpdate
+                                      ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(item.availableVer))}</span>`
+                                      : item.versionStatus === 'ahead'
+                                        ? `<span class="badge badge-cat">${escapeHtml(t.essStatusNewerThanWinget)}</span>`
+                                        : `<span class="badge badge-active">${escapeHtml(item.installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
                         }
                     </div>
                 `
@@ -826,12 +939,14 @@ function renderEssentialCard(item: main.EssentialView): string {
                     <button
                         class="btn btn-sm"
                         data-action="ess-detail"
+                        data-mgr="winget"
                         data-ess="${escapeHtml(item.id)}"
                         data-name="${escapeHtml(item.name)}"
                         data-wid="${escapeHtml(item.wingetId)}"
                         data-source="${escapeHtml(item.source || 'winget')}"
                         data-ver="${escapeHtml(item.installedVer || selectedVer)}"
                         data-desc="${escapeHtml(desc)}"
+                        data-iconurl="${escapeHtml(item.iconUrl || '')}"
                         data-isess="1"
                     >
                         ${escapeHtml(t.essDetailsBtn)}
@@ -842,207 +957,682 @@ function renderEssentialCard(item: main.EssentialView): string {
     `;
 }
 
+function managerDisplayName(mgr: string): string {
+    switch ((mgr || 'winget').toLowerCase()) {
+        case 'scoop':
+            return 'Scoop';
+        case 'choco':
+            return 'Chocolatey';
+        case 'npm':
+            return 'npm';
+        case 'pnpm':
+            return 'pnpm';
+        case 'bun':
+            return 'Bun';
+        case 'uv':
+            return 'uv (PyPI)';
+        case 'pip':
+            return 'pip';
+        case 'cargo':
+            return 'Cargo';
+        case 'dotnet':
+            return '.NET Tool';
+        case 'psgallery':
+            return 'PSGallery';
+        default:
+            return 'Winget';
+    }
+}
+
+function renderManagerBadge(mgr: string, source?: string): string {
+    const norm = (mgr || 'winget').toLowerCase();
+    if (norm === 'winget') {
+        return `<span class="badge ${source === 'msstore' ? 'badge-store' : 'badge-cat'}">${escapeHtml(source || 'winget')}</span>`;
+    }
+    const label =
+        norm === 'scoop' && source && source !== 'scoop'
+            ? `scoop · ${source}`
+            : norm === 'uv'
+              ? 'uv · pypi'
+              : norm === 'pip'
+                ? 'pip · pypi'
+                : norm === 'cargo'
+                  ? 'cargo · crates.io'
+                  : norm === 'dotnet'
+                    ? '.net · nuget'
+                    : norm === 'psgallery'
+                      ? 'psgallery'
+                      : norm;
+    return `<span class="badge badge-mgr-${escapeHtml(norm)}">${escapeHtml(label)}</span>`;
+}
+
+function isExtraManagerAvailable(mgr: string): boolean {
+    if (mgr === 'winget') return Boolean(state?.wingetEnv?.wingetAvailable);
+    return Boolean((state?.pkgManagers || []).find((m) => m.id === mgr)?.available);
+}
+
+function renderExtraSearchCard(
+    row: pkgmgr.PackageEntry,
+    installedByKey: Map<string, main.InstalledAppView>,
+    targetMgrOptions?: ManagerKey[],
+    targetGroupKey?: string,
+): string {
+    const t = getT(currentLang());
+    const idLower = row.id.toLowerCase();
+    const rawMgr = (row.manager || 'scoop').toLowerCase() as ManagerKey;
+    const isMultiTargetChoice = Boolean(targetMgrOptions && targetMgrOptions.length > 1);
+    const selectKey = `${targetGroupKey || rawMgr}:${idLower}`;
+    const liveInst =
+        isMultiTargetChoice && targetMgrOptions
+            ? targetMgrOptions.map((jm) => installedByKey.get(`${jm}:${idLower}`)).find(Boolean)
+            : installedByKey.get(`${rawMgr}:${idLower}`);
+
+    const mgr: ManagerKey =
+        ((liveInst?.manager ||
+            (row.installed ? row.manager : '') ||
+            (isMultiTargetChoice ? selectedSearchJSMgrByPkg[selectKey] || targetMgrOptions![0] : rawMgr)).toLowerCase() as ManagerKey) ||
+        'scoop';
+
+    const isInstalled = Boolean(liveInst || row.installed);
+    const installedVer = liveInst?.installedVer || row.installedVer || '';
+    const isIgnored = Boolean(liveInst?.ignored);
+    const availVer = isIgnored
+        ? ''
+        : liveInst?.hasUpdate
+          ? liveInst.availableVer
+          : row.hasUpdate
+            ? row.availableVer || row.version
+            : '';
+    const hasUpdate = Boolean(availVer);
+    const mgrMissing = !isExtraManagerAvailable(mgr);
+    const canUninstall =
+        !(mgr === 'choco' && idLower === 'chocolatey') &&
+        !(mgr === 'npm' && idLower === 'npm') &&
+        !(mgr === 'pip' && (idLower === 'pip' || idLower === 'setuptools' || idLower === 'wheel'));
+
+    const statusBadge = isInstalled
+        ? isIgnored
+            ? `<span class="badge badge-active">${escapeHtml(installedVer ? t.essBadgeInstalled(installedVer) : t.essBadgeInstalledNoVer)}</span>`
+            : hasUpdate
+              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+              : `<span class="badge badge-active">${escapeHtml(installedVer ? t.essBadgeInstalled(installedVer) : t.essBadgeInstalledNoVer)}</span>`
+        : '';
+
+    const versionCompareHtml = isInstalled
+        ? `
+            <div class="version-compare">
+                <div class="vc-group">
+                    <span class="vc-item">
+                        <span class="vc-label">${escapeHtml(t.installedLabel)}</span>
+                        <span class="vc-val">${escapeHtml(installedVer ? `v${installedVer}` : t.statusDetected)}</span>
+                    </span>
+                    ${
+                        row.version
+                            ? `
+                            <span class="vc-sep">·</span>
+                            <span class="vc-item">
+                                <span class="vc-label">${escapeHtml(t.latestLabel)}</span>
+                                <span class="vc-val">v${escapeHtml(row.version)}</span>
+                            </span>
+                        `
+                            : ''
+                    }
+                </div>
+                ${
+                    isIgnored
+                        ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
+                        : hasUpdate
+                          ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+                          : `<span class="badge badge-active">${escapeHtml(installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
+                }
+            </div>
+        `
+        : '';
+
+    const jsTargetSelectHtml =
+        !isInstalled && isMultiTargetChoice && targetMgrOptions
+            ? `
+                <select
+                    class="select-box select-box-compact"
+                    data-role="search-js-mgr"
+                    data-pkg-key="${escapeHtml(selectKey)}"
+                    title="${escapeHtml(t.pkgSearchInstallWithTip)}"
+                    ${busy ? 'disabled' : ''}
+                >
+                    ${targetMgrOptions
+                        .map(
+                            (jm) =>
+                                `<option value="${escapeHtml(jm)}" ${jm === mgr ? 'selected' : ''}>${escapeHtml(managerDisplayName(jm))}</option>`,
+                        )
+                        .join('')}
+                </select>
+            `
+            : '';
+
+    const actionHtml = isInstalled
+        ? `
+            ${
+                hasUpdate
+                    ? `
+                    <button
+                        class="btn btn-primary btn-sm"
+                        data-action="pkg-action"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-name="${escapeHtml(row.name)}"
+                        data-source="${escapeHtml(row.source || '')}"
+                        data-mode="update"
+                        ${busy || mgrMissing ? 'disabled' : ''}
+                    >
+                        ${escapeHtml(t.btnUpdateTool)}
+                    </button>
+                `
+                    : ''
+            }
+            <button
+                class="btn btn-sm"
+                data-action="pkg-action"
+                data-mgr="${escapeHtml(mgr)}"
+                data-wid="${escapeHtml(row.id)}"
+                data-name="${escapeHtml(row.name)}"
+                data-source="${escapeHtml(row.source || '')}"
+                data-mode="install"
+                ${busy || mgrMissing ? 'disabled' : ''}
+            >
+                ${escapeHtml(t.essReinstallSilent)}
+            </button>
+            ${
+                canUninstall
+                    ? `
+                    <button
+                        class="btn btn-danger btn-sm"
+                        data-action="pkg-action"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-name="${escapeHtml(row.name)}"
+                        data-source="${escapeHtml(row.source || '')}"
+                        data-mode="uninstall"
+                        ${busy || mgrMissing ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnUninstallTip)}"
+                    >
+                        ${escapeHtml(t.pkgBtnUninstall)}
+                    </button>
+                `
+                    : ''
+            }
+        `
+        : `
+            ${jsTargetSelectHtml}
+            <button
+                class="btn btn-primary btn-sm"
+                data-action="pkg-action"
+                data-mgr="${escapeHtml(mgr)}"
+                data-wid="${escapeHtml(row.id)}"
+                data-name="${escapeHtml(row.name)}"
+                data-source="${escapeHtml(row.source || '')}"
+                data-mode="install"
+                ${busy || mgrMissing ? 'disabled' : ''}
+                title="${escapeHtml(mgrMissing ? t.pkgMgrNotReady(managerDisplayName(mgr)) : '')}"
+            >
+                ${escapeHtml(t.essInstallSilent)}
+            </button>
+        `;
+
+    return `
+        <div class="card ${isInstalled ? 'card-active' : ''}">
+            <div class="card-top">
+                <div class="card-main-row">
+                    ${renderAppIcon(row.id, row.name, { iconUrl: row.iconUrl })}
+                    <div class="card-info">
+                        <div class="card-title-row">
+                            <span class="card-name">${escapeHtml(row.name)}</span>
+                            <span class="card-id">[${escapeHtml(row.id)}]</span>
+                            ${renderManagerBadge(mgr, row.source)}
+                            ${row.version ? `<span class="badge badge-idle">v${escapeHtml(row.version)}</span>` : ''}
+                        </div>
+                        ${
+                            row.description
+                                ? `<div class="card-desc card-desc-clamp">${escapeHtml(row.description)}</div>`
+                                : `<div class="card-desc">${escapeHtml(t.essVersionLabel)} ${escapeHtml(row.version || '-')}</div>`
+                        }
+                    </div>
+                </div>
+                ${statusBadge}
+            </div>
+            ${versionCompareHtml}
+            <div class="card-controls">
+                <div class="controls-left">
+                    ${actionHtml}
+                    <button
+                        class="btn btn-sm"
+                        data-action="ess-detail"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-name="${escapeHtml(row.name)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-source="${escapeHtml(row.source || mgr)}"
+                        data-ver="${escapeHtml(row.version || '')}"
+                        data-desc="${escapeHtml(row.description || '')}"
+                        data-iconurl="${escapeHtml(row.iconUrl || '')}"
+                        data-isess="0"
+                    >
+                        ${escapeHtml(t.essDetailsBtn)}
+                    </button>
+                    ${
+                        row.homepage
+                            ? `<button class="btn btn-sm" data-open-url="${escapeHtml(row.homepage)}">${escapeHtml(t.essOpenHomepage)}</button>`
+                            : ''
+                    }
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function searchSourceFilterLabel(key: SearchFilterKey, jsMgrs: ManagerKey[], pyMgrs: ManagerKey[]): string {
+    switch (key) {
+        case 'winget':
+            return 'Winget';
+        case 'msstore':
+            return 'MS Store';
+        case 'scoop':
+            return 'Scoop';
+        case 'choco':
+            return 'Chocolatey';
+        case 'js':
+            return jsMgrs.length > 1 ? jsMgrs.map(managerDisplayName).join(' / ') : managerDisplayName(jsMgrs[0] || 'npm');
+        case 'py':
+            return pyMgrs.length > 1 ? pyMgrs.map(managerDisplayName).join(' / ') : managerDisplayName(pyMgrs[0] || 'uv');
+        case 'cargo':
+            return 'Cargo';
+        case 'dotnet':
+            return '.NET Tool';
+        case 'psgallery':
+            return 'PSGallery';
+        default:
+            return 'All';
+    }
+}
+
+function searchPendingGroupLabel(group: string, jsMgrs: ManagerKey[], pyMgrs: ManagerKey[]): string {
+    switch (group) {
+        case 'winget':
+            return 'Winget / MS Store';
+        case 'scoop':
+            return 'Scoop';
+        case 'choco':
+            return 'Chocolatey';
+        case 'js':
+            return jsMgrs.length > 1 ? jsMgrs.map(managerDisplayName).join('/') : managerDisplayName(jsMgrs[0] || 'npm');
+        case 'py':
+            return pyMgrs.length > 1 ? pyMgrs.map(managerDisplayName).join('/') : managerDisplayName(pyMgrs[0] || 'uv');
+        case 'cargo':
+            return 'Cargo';
+        case 'dotnet':
+            return '.NET Tool';
+        case 'psgallery':
+            return 'PSGallery';
+        default:
+            return group;
+    }
+}
+
+function searchMatchScore(queryLower: string, name: string, id: string): number {
+    if (!queryLower) return 0;
+    const n = name.toLowerCase();
+    const idL = id.toLowerCase();
+    if (idL === queryLower || n === queryLower) return 3;
+    if (n.startsWith(queryLower) || idL.startsWith(queryLower)) return 2;
+    if (n.includes(queryLower) || idL.includes(queryLower)) return 1;
+    return 0;
+}
+
+function renderWingetSearchCard(
+    row: essentials.WingetTableRow,
+    pinnedIDs: Set<string>,
+    installedWingetByID: Map<string, main.InstalledAppView>,
+    curatedByID: Map<string, main.EssentialView>,
+    wingetMissing: boolean,
+): string {
+    const t = getT(currentLang());
+    const idLower = row.id.toLowerCase();
+    const isPinned = pinnedIDs.has(idLower);
+    const liveInst = installedWingetByID.get(idLower);
+    const liveEss = curatedByID.get(idLower);
+
+    const isInstalled = Boolean(liveInst || liveEss?.installed || row.installed);
+    const installedVer =
+        liveInst?.installedVer || (liveEss?.installed ? liveEss.installedVer : '') || row.installedVer || '';
+    const isIgnored = Boolean(liveInst?.ignored || liveEss?.updateIgnored);
+    const availVer = isIgnored
+        ? ''
+        : liveInst?.hasUpdate
+          ? liveInst.availableVer
+          : liveEss?.hasUpdate
+            ? liveEss.availableVer
+            : row.hasUpdate
+              ? row.available || row.version
+              : '';
+    const hasUpdate = Boolean(availVer);
+    const matchedBy = liveEss?.matchedBy || row.matchedBy || (liveInst ? 'Winget' : '');
+
+    const det = getCachedDetails(row.id, row.source);
+    const domain = shortDomain(det?.homepage || det?.publisherUrl || det?.installerUrl);
+    const metaStrip = renderMetaStrip({
+        publisher: det?.publisher,
+        domain,
+        license: det?.license,
+        installerType: det?.installerType,
+        match: row.match,
+    });
+    const descText = det?.description
+        ? `<div class="card-desc card-desc-clamp">${escapeHtml(det.description)}</div>`
+        : `<div class="card-desc">${escapeHtml(t.essVersionLabel)} ${escapeHtml(row.version || '-')}</div>`;
+
+    const statusBadge = isInstalled
+        ? isIgnored
+            ? `<span class="badge badge-active">${escapeHtml(installedVer ? t.essBadgeInstalled(installedVer) : t.essBadgeInstalledNoVer)}</span>`
+            : hasUpdate
+              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+              : installedVer
+                ? `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalled(installedVer))}</span>`
+                : `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalledNoVer)}</span>`
+        : '';
+
+    const versionCompareHtml = isInstalled
+        ? `
+            <div class="version-compare">
+                <div class="vc-group">
+                    <span class="vc-item" ${matchedBy ? `title="${escapeHtml(matchedBy)}"` : ''}>
+                        <span class="vc-label">${escapeHtml(t.installedLabel)}</span>
+                        <span class="vc-val">${escapeHtml(installedVer ? `v${installedVer}` : t.statusDetected)}</span>
+                    </span>
+                    ${
+                        row.version
+                            ? `
+                            <span class="vc-sep">·</span>
+                            <span class="vc-item">
+                                <span class="vc-label">${escapeHtml(t.essWingetLatestLabel)}</span>
+                                <span class="vc-val">v${escapeHtml(row.version)}</span>
+                            </span>
+                        `
+                            : ''
+                    }
+                </div>
+                ${
+                    isIgnored
+                        ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
+                        : hasUpdate
+                          ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
+                          : `<span class="badge badge-active">${escapeHtml(installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
+                }
+            </div>
+        `
+        : '';
+
+    const installOrUpdateBtn = isInstalled
+        ? `
+            ${
+                hasUpdate
+                    ? `
+                    <button
+                        class="btn btn-primary btn-sm"
+                        data-action="winget-update-raw"
+                        data-name="${escapeHtml(row.name)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-source="${escapeHtml(row.source || 'winget')}"
+                        ${busy || wingetMissing ? 'disabled' : ''}
+                    >
+                        ${escapeHtml(t.btnUpdateTool)}
+                    </button>
+                `
+                    : ''
+            }
+            <button
+                class="btn btn-sm"
+                data-action="winget-install-raw"
+                data-name="${escapeHtml(row.name)}"
+                data-wid="${escapeHtml(row.id)}"
+                data-source="${escapeHtml(row.source || 'winget')}"
+                ${busy || wingetMissing ? 'disabled' : ''}
+            >
+                ${escapeHtml(t.essReinstallSilent)}
+            </button>
+        `
+        : `
+            <button
+                class="btn btn-primary btn-sm"
+                data-action="winget-install-raw"
+                data-name="${escapeHtml(row.name)}"
+                data-wid="${escapeHtml(row.id)}"
+                data-source="${escapeHtml(row.source || 'winget')}"
+                ${busy || wingetMissing ? 'disabled' : ''}
+            >
+                ${escapeHtml(t.essInstallSilent)}
+            </button>
+        `;
+
+    return `
+        <div class="card ${isInstalled ? 'card-active' : ''}">
+            <div class="card-top">
+                <div class="card-main-row">
+                    ${renderAppIcon(row.id, row.name, { wingetId: row.id, dataUrl: det?.iconDataUrl, iconUrl: det?.iconUrl || row.iconUrl })}
+                    <div class="card-info">
+                        <div class="card-title-row">
+                            <span class="card-name">${escapeHtml(det?.name || row.name)}</span>
+                            <span class="card-id">[${escapeHtml(row.id)}]</span>
+                            <span class="badge ${row.source === 'msstore' ? 'badge-store' : 'badge-cat'}">
+                                ${escapeHtml(row.source || 'winget')}
+                            </span>
+                            ${row.version ? `<span class="badge badge-idle">v${escapeHtml(row.version)}</span>` : ''}
+                        </div>
+                        ${descText}
+                        ${metaStrip}
+                    </div>
+                </div>
+                ${statusBadge}
+            </div>
+            ${versionCompareHtml}
+            <div class="card-controls">
+                <div class="controls-left">
+                    ${installOrUpdateBtn}
+                    <button
+                        class="btn btn-sm"
+                        data-action="winget-pin"
+                        data-name="${escapeHtml(row.name)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-source="${escapeHtml(row.source || 'winget')}"
+                        ${busy || isPinned ? 'disabled' : ''}
+                    >
+                        ${escapeHtml(isPinned ? t.essAlreadyPinned : t.essPinToList)}
+                    </button>
+                    <button
+                        class="btn btn-sm"
+                        data-action="ess-detail"
+                        data-mgr="winget"
+                        data-name="${escapeHtml(det?.name || row.name)}"
+                        data-wid="${escapeHtml(row.id)}"
+                        data-source="${escapeHtml(row.source || 'winget')}"
+                        data-ver="${escapeHtml(row.version || '')}"
+                        data-desc="${escapeHtml(det?.description || '')}"
+                        data-iconurl="${escapeHtml(det?.iconUrl || row.iconUrl || '')}"
+                        data-isess="0"
+                    >
+                        ${escapeHtml(t.essDetailsBtn)}
+                    </button>
+                    ${
+                        det?.installerSize && det.installerSize > 0
+                            ? `<span class="size-pill" title="${escapeHtml(t.downloadSizeLabel(formatBytes(det.installerSize)))}">↓ ${escapeHtml(formatBytes(det.installerSize))}</span>`
+                            : ''
+                    }
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function renderWingetSearchView(): string {
     const t = getT(currentLang());
     const pinnedIDs = new Set((state?.essentials || []).map((e) => e.wingetId.toLowerCase()));
-    const installedByID = new Map((state?.installedApps || []).map((a) => [a.id.toLowerCase(), a]));
+    const installedWingetByID = new Map(
+        (state?.installedApps || [])
+            .filter((a) => (a.manager || 'winget') === 'winget')
+            .map((a) => [a.id.toLowerCase(), a]),
+    );
+    const installedAllByKey = new Map(
+        (state?.installedApps || []).map((a) => [`${(a.manager || 'winget').toLowerCase()}:${a.id.toLowerCase()}`, a]),
+    );
     const curatedByID = new Map((state?.essentials || []).map((e) => [e.wingetId.toLowerCase(), e]));
     const wingetMissing = !state?.wingetEnv?.wingetAvailable;
+    const anyPkgMgrAvailable =
+        !wingetMissing || (state?.pkgManagers || []).some((m) => m.available);
 
-    let bodyHtml = `<div class="empty-state">${escapeHtml(t.essSearchEmpty)}</div>`;
-    if (wingetSearching) {
-        bodyHtml = `<div class="empty-state">${escapeHtml(t.essSearching)}</div>`;
-    } else if (wingetSearchResults.length > 0) {
-        bodyHtml = `
-            <div class="cards-grid">
-                ${wingetSearchResults
-                    .map((row) => {
-                        const idLower = row.id.toLowerCase();
-                        const isPinned = pinnedIDs.has(idLower);
-                        const liveInst = installedByID.get(idLower);
-                        const liveEss = curatedByID.get(idLower);
+    const wingetOnlyRows = wingetSearchResults.filter((r) => (r.source || 'winget').toLowerCase() !== 'msstore');
+    const msstoreRows = wingetSearchResults.filter((r) => (r.source || '').toLowerCase() === 'msstore');
+    const extraSpecs: Array<{
+        filterKey: SearchFilterKey;
+        groupKey: string;
+        groupOrder: number;
+        rows: pkgmgr.PackageEntry[];
+        altMgrs?: ManagerKey[];
+    }> = [
+        { filterKey: 'scoop', groupKey: 'scoop', groupOrder: 2, rows: extraSearchByGroup['scoop'] || [] },
+        { filterKey: 'choco', groupKey: 'choco', groupOrder: 3, rows: extraSearchByGroup['choco'] || [] },
+        { filterKey: 'js', groupKey: 'js', groupOrder: 4, rows: extraSearchByGroup['js'] || [], altMgrs: unifiedJSMgrs },
+        { filterKey: 'py', groupKey: 'py', groupOrder: 5, rows: extraSearchByGroup['py'] || [], altMgrs: unifiedPyMgrs },
+        { filterKey: 'cargo', groupKey: 'cargo', groupOrder: 6, rows: extraSearchByGroup['cargo'] || [] },
+        { filterKey: 'dotnet', groupKey: 'dotnet', groupOrder: 7, rows: extraSearchByGroup['dotnet'] || [] },
+        { filterKey: 'psgallery', groupKey: 'psgallery', groupOrder: 8, rows: extraSearchByGroup['psgallery'] || [] },
+    ];
 
-                        const isInstalled = Boolean(liveInst || liveEss?.installed || row.installed);
-                        const installedVer =
-                            liveInst?.installedVer || (liveEss?.installed ? liveEss.installedVer : '') || row.installedVer || '';
-                        const isIgnored = Boolean(liveInst?.ignored || liveEss?.updateIgnored);
-                        const availVer = isIgnored
-                            ? ''
-                            : liveInst?.hasUpdate
-                              ? liveInst.availableVer
-                              : liveEss?.hasUpdate
-                                ? liveEss.availableVer
-                                : row.hasUpdate
-                                  ? row.available || row.version
-                                  : '';
-                        const hasUpdate = Boolean(availVer);
-                        const matchedBy = liveEss?.matchedBy || row.matchedBy || (liveInst ? 'Winget' : '');
+    const sourceCounts: Record<SearchFilterKey, number> = {
+        all: 0,
+        winget: wingetOnlyRows.length,
+        msstore: msstoreRows.length,
+        scoop: 0,
+        choco: 0,
+        js: 0,
+        py: 0,
+        cargo: 0,
+        dotnet: 0,
+        psgallery: 0,
+    };
+    let totalResults = sourceCounts.winget + sourceCounts.msstore;
+    for (const sp of extraSpecs) {
+        sourceCounts[sp.filterKey] = sp.rows.length;
+        totalResults += sp.rows.length;
+    }
+    sourceCounts.all = totalResults;
 
-                        const det = getCachedDetails(row.id, row.source);
-                        const domain = shortDomain(det?.homepage || det?.publisherUrl || det?.installerUrl);
-                        const metaStrip = renderMetaStrip({
-                            publisher: det?.publisher,
-                            domain,
-                            license: det?.license,
-                            installerType: det?.installerType,
-                            match: row.match,
-                        });
-                        const descText = det?.description
-                            ? `<div class="card-desc card-desc-clamp">${escapeHtml(det.description)}</div>`
-                            : `<div class="card-desc">${escapeHtml(t.essVersionLabel)} ${escapeHtml(row.version || '-')}</div>`;
+    const filterOrder: SearchFilterKey[] = ['winget', 'msstore', 'scoop', 'choco', 'js', 'py', 'cargo', 'dotnet', 'psgallery'];
+    const populatedFilters = filterOrder.filter((k) => sourceCounts[k] > 0);
+    const effectiveFilter: SearchFilterKey =
+        searchResultFilter !== 'all' && sourceCounts[searchResultFilter] > 0 ? searchResultFilter : 'all';
 
-                        const statusBadge = isInstalled
-                            ? isIgnored
-                                ? `<span class="badge badge-active">${escapeHtml(installedVer ? t.essBadgeInstalled(installedVer) : t.essBadgeInstalledNoVer)}</span>`
-                                : hasUpdate
-                                  ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
-                                  : installedVer
-                                    ? `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalled(installedVer))}</span>`
-                                    : `<span class="badge badge-active">${escapeHtml(t.essBadgeInstalledNoVer)}</span>`
-                            : '';
-
-                        const versionCompareHtml = isInstalled
-                            ? `
-                                <div class="version-compare">
-                                    <div class="vc-group">
-                                        <span class="vc-item" ${matchedBy ? `title="${escapeHtml(matchedBy)}"` : ''}>
-                                            <span class="vc-label">${escapeHtml(t.installedLabel)}</span>
-                                            <span class="vc-val">${escapeHtml(installedVer ? `v${installedVer}` : t.statusDetected)}</span>
-                                        </span>
-                                        ${
-                                            row.version
-                                                ? `
-                                                <span class="vc-sep">·</span>
-                                                <span class="vc-item">
-                                                    <span class="vc-label">${escapeHtml(t.essWingetLatestLabel)}</span>
-                                                    <span class="vc-val">v${escapeHtml(row.version)}</span>
-                                                </span>
-                                            `
-                                                : ''
-                                        }
-                                    </div>
-                                    ${
-                                        isIgnored
-                                            ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
-                                            : hasUpdate
-                                              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(availVer))}</span>`
-                                              : `<span class="badge badge-active">${escapeHtml(installedVer ? t.statusUpToDate : t.statusDetected)}</span>`
-                                    }
-                                </div>
-                            `
-                            : '';
-
-                        const installOrUpdateBtn = isInstalled
-                            ? `
-                                ${
-                                    hasUpdate
-                                        ? `
-                                        <button
-                                            class="btn btn-primary btn-sm"
-                                            data-action="winget-update-raw"
-                                            data-name="${escapeHtml(row.name)}"
-                                            data-wid="${escapeHtml(row.id)}"
-                                            data-source="${escapeHtml(row.source || 'winget')}"
-                                            ${busy || wingetMissing ? 'disabled' : ''}
-                                        >
-                                            ${escapeHtml(t.btnUpdateTool)}
-                                        </button>
-                                    `
-                                        : ''
-                                }
-                                <button
-                                    class="btn btn-sm"
-                                    data-action="winget-install-raw"
-                                    data-name="${escapeHtml(row.name)}"
-                                    data-wid="${escapeHtml(row.id)}"
-                                    data-source="${escapeHtml(row.source || 'winget')}"
-                                    ${busy || wingetMissing ? 'disabled' : ''}
-                                >
-                                    ${escapeHtml(t.essReinstallSilent)}
-                                </button>
-                            `
-                            : `
-                                <button
-                                    class="btn btn-primary btn-sm"
-                                    data-action="winget-install-raw"
-                                    data-name="${escapeHtml(row.name)}"
-                                    data-wid="${escapeHtml(row.id)}"
-                                    data-source="${escapeHtml(row.source || 'winget')}"
-                                    ${busy || wingetMissing ? 'disabled' : ''}
-                                >
-                                    ${escapeHtml(t.essInstallSilent)}
-                                </button>
-                            `;
-
-                        return `
-                        <div class="card ${isInstalled ? 'card-active' : ''}">
-                            <div class="card-top">
-                                <div class="card-main-row">
-                                    ${renderAppIcon(row.id, row.name, { wingetId: row.id, dataUrl: det?.iconDataUrl })}
-                                    <div class="card-info">
-                                        <div class="card-title-row">
-                                            <span class="card-name">${escapeHtml(det?.name || row.name)}</span>
-                                            <span class="card-id">[${escapeHtml(row.id)}]</span>
-                                            <span class="badge ${row.source === 'msstore' ? 'badge-store' : 'badge-cat'}">
-                                                ${escapeHtml(row.source || 'winget')}
-                                            </span>
-                                            ${row.version ? `<span class="badge badge-idle">v${escapeHtml(row.version)}</span>` : ''}
-                                        </div>
-                                        ${descText}
-                                        ${metaStrip}
-                                    </div>
-                                </div>
-                                ${statusBadge}
-                            </div>
-                            ${versionCompareHtml}
-                            <div class="card-controls">
-                                <div class="controls-left">
-                                    ${installOrUpdateBtn}
-                                    <button
-                                        class="btn btn-sm"
-                                        data-action="winget-pin"
-                                        data-name="${escapeHtml(row.name)}"
-                                        data-wid="${escapeHtml(row.id)}"
-                                        data-source="${escapeHtml(row.source || 'winget')}"
-                                        ${busy || isPinned ? 'disabled' : ''}
-                                    >
-                                        ${escapeHtml(isPinned ? t.essAlreadyPinned : t.essPinToList)}
-                                    </button>
-                                    <button
-                                        class="btn btn-sm"
-                                        data-action="ess-detail"
-                                        data-name="${escapeHtml(det?.name || row.name)}"
-                                        data-wid="${escapeHtml(row.id)}"
-                                        data-source="${escapeHtml(row.source || 'winget')}"
-                                        data-ver="${escapeHtml(row.version || '')}"
-                                        data-desc="${escapeHtml(det?.description || '')}"
-                                        data-isess="0"
-                                    >
-                                        ${escapeHtml(t.essDetailsBtn)}
-                                    </button>
-                                    ${
-                                        det?.installerSize && det.installerSize > 0
-                                            ? `<span class="size-pill" title="${escapeHtml(t.downloadSizeLabel(formatBytes(det.installerSize)))}">↓ ${escapeHtml(formatBytes(det.installerSize))}</span>`
-                                            : ''
-                                    }
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    })
+    // Only render the horizontal filter bar once at least one package manager has returned results.
+    const filterRowHtml =
+        totalResults > 0
+            ? `
+            <div class="mgr-filter-row">
+                <button class="mgr-chip ${effectiveFilter === 'all' ? 'active' : ''}" data-search-filter="all">
+                    <span>${escapeHtml(t.pkgSearchFilterAll(totalResults))}</span>
+                </button>
+                ${populatedFilters
+                    .map(
+                        (k) => `
+                        <button class="mgr-chip ${effectiveFilter === k ? 'active' : ''}" data-search-filter="${k}">
+                            <span>${escapeHtml(searchSourceFilterLabel(k, unifiedJSMgrs, unifiedPyMgrs))}</span>
+                            <span class="mgr-chip-count">${sourceCounts[k]}</span>
+                        </button>
+                    `,
+                    )
                     .join('')}
             </div>
-        `;
-    } else if (wingetSearchExecuted) {
+        `
+            : '';
+
+    const pendingBannerHtml =
+        wingetSearching && unifiedSearchPending.length > 0
+            ? `
+            <div class="search-progress-pill">
+                <span class="spinner-dot"></span>
+                <span>${escapeHtml(t.pkgSearchPendingNote(unifiedSearchPending.map((g) => searchPendingGroupLabel(g, unifiedJSMgrs, unifiedPyMgrs))))}</span>
+            </div>
+        `
+            : '';
+
+    const qLower = wingetCatalogQuery.trim().toLowerCase();
+    interface SearchCardSlot {
+        groupOrder: number;
+        score: number;
+        index: number;
+        html: string;
+    }
+    const cardSlots: SearchCardSlot[] = [];
+
+    if (effectiveFilter === 'all' || effectiveFilter === 'winget') {
+        wingetOnlyRows.forEach((row, idx) => {
+            cardSlots.push({
+                groupOrder: 0,
+                score: searchMatchScore(qLower, row.name, row.id),
+                index: idx,
+                html: renderWingetSearchCard(row, pinnedIDs, installedWingetByID, curatedByID, wingetMissing),
+            });
+        });
+    }
+    if (effectiveFilter === 'all' || effectiveFilter === 'msstore') {
+        msstoreRows.forEach((row, idx) => {
+            cardSlots.push({
+                groupOrder: 1,
+                score: searchMatchScore(qLower, row.name, row.id),
+                index: idx,
+                html: renderWingetSearchCard(row, pinnedIDs, installedWingetByID, curatedByID, wingetMissing),
+            });
+        });
+    }
+    for (const sp of extraSpecs) {
+        if (effectiveFilter !== 'all' && effectiveFilter !== sp.filterKey) continue;
+        sp.rows.forEach((row, idx) => {
+            cardSlots.push({
+                groupOrder: sp.groupOrder,
+                score: searchMatchScore(qLower, row.name, row.id),
+                index: idx,
+                html: renderExtraSearchCard(row, installedAllByKey, sp.altMgrs, sp.groupKey),
+            });
+        });
+    }
+
+    if (effectiveFilter === 'all' && cardSlots.length > 1) {
+        cardSlots.sort((a, b) => {
+            if (a.score !== b.score) return b.score - a.score;
+            if (a.groupOrder !== b.groupOrder) return a.groupOrder - b.groupOrder;
+            return a.index - b.index;
+        });
+    }
+
+    let bodyHtml = `<div class="empty-state">${escapeHtml(t.essSearchEmpty)}</div>`;
+    if (cardSlots.length > 0) {
+        bodyHtml = `<div class="cards-grid">${cardSlots.map((c) => c.html).join('')}</div>`;
+    } else if (wingetSearching) {
+        bodyHtml = `<div class="empty-state">${escapeHtml(t.essSearching)}</div>`;
+    } else if (wingetSearchExecuted && unifiedSearchDone) {
         bodyHtml = `<div class="empty-state">${escapeHtml(t.essEmpty)}</div>`;
     }
+
+    const subtitleText = wingetSearching
+        ? unifiedSearchPending.length > 0
+            ? t.pkgSearchPendingNote(unifiedSearchPending.map((g) => searchPendingGroupLabel(g, unifiedJSMgrs, unifiedPyMgrs)))
+            : t.essSearching
+        : wingetEnriching
+          ? t.essEnrichingSearch
+          : t.essSearchSubtitle;
 
     return `
         <section>
             <div class="section-header">
                 <span class="section-title">${escapeHtml(t.essSearchTitle)}</span>
-                <span class="section-subtitle">${escapeHtml(wingetEnriching ? t.essEnrichingSearch : t.essSearchSubtitle)}</span>
+                <span class="section-subtitle">${escapeHtml(subtitleText)}</span>
             </div>
+            ${!anyPkgMgrAvailable ? `<div class="conflict-banner" style="margin-bottom:8px">${escapeHtml(t.pkgSearchNoAvailMgrs)}</div>` : ''}
             <div class="search-bar-row">
                 <input
                     class="text-input"
@@ -1051,10 +1641,17 @@ function renderWingetSearchView(): string {
                     value="${escapeHtml(wingetCatalogQuery)}"
                     placeholder="${escapeHtml(t.essSearchPlaceholder)}"
                 />
-                <button class="btn btn-primary" id="btn-winget-search" ${wingetSearching || wingetMissing ? 'disabled' : ''}>
+                <button class="btn btn-primary" id="btn-winget-search" ${!anyPkgMgrAvailable ? 'disabled' : ''}>
                     ${escapeHtml(t.essSearchBtn)}
                 </button>
+                ${
+                    wingetSearchExecuted || wingetCatalogQuery.trim()
+                        ? `<button class="btn" id="btn-winget-search-clear">${escapeHtml(t.pkgSearchClearBtn)}</button>`
+                        : ''
+                }
             </div>
+            ${filterRowHtml}
+            ${pendingBannerHtml}
             ${bodyHtml}
         </section>
     `;
@@ -1063,7 +1660,7 @@ function renderWingetSearchView(): string {
 function renderAboutModal(s: main.DashboardState): string {
     if (!showAboutModal) return '';
     const t = getT(currentLang());
-    const ver = s.appVersion || '1.0.2';
+    const ver = s.appVersion || '1.1.2';
 
     const linkBtn = (url: string): string =>
         `<button class="detail-link-btn" data-open-url="${escapeHtml(url)}">${escapeHtml(url)}</button>`;
@@ -1160,39 +1757,209 @@ function renderAboutModal(s: main.DashboardState): string {
     `;
 }
 
+function getEffectiveSettingsDraft(s: main.DashboardState): config.AppSettings {
+    if (settingsDraft) return settingsDraft;
+    const base = s.settings || {};
+    return config.AppSettings.createFrom({
+        baseDir: base.baseDir || s.baseDir || 'C:\\AppPath',
+        language: base.language || s.language || 'en',
+        closeAction: base.closeAction || 'ask',
+        autoStart: Boolean(base.autoStart),
+        startInTray: base.startInTray !== undefined ? Boolean(base.startInTray) : true,
+        autoCheckUpdates: base.autoCheckUpdates !== undefined ? Boolean(base.autoCheckUpdates) : true,
+        autoCheckIntervalHours: base.autoCheckIntervalHours || 6,
+        delayStartupScan: base.delayStartupScan !== undefined ? Boolean(base.delayStartupScan) : true,
+    });
+}
+
+function openSettingsModal(): void {
+    if (!state) return;
+    settingsDraft = null;
+    settingsDraft = getEffectiveSettingsDraft(state);
+    showSettingsModal = true;
+    render(true);
+}
+
+function renderSettingsModal(s: main.DashboardState): string {
+    if (!showSettingsModal) return '';
+    const t = getT(currentLang());
+    const draft = getEffectiveSettingsDraft(s);
+    const intervals = [1, 3, 6, 12, 24];
+
+    return `
+        <div class="modal-backdrop" id="settings-modal-backdrop">
+            <div class="modal-card settings-modal-card">
+                <div class="modal-header">
+                    <span class="modal-title">${escapeHtml(t.settingsTitle)}</span>
+                    <button class="btn btn-sm" id="btn-settings-close">✕</button>
+                </div>
+                <div class="detail-modal-scroll">
+                    <div class="settings-section">
+                        <div class="settings-section-title">${escapeHtml(t.settingsSecGeneral)}</div>
+                        <div class="settings-field-row">
+                            <span class="settings-field-label">${escapeHtml(t.settingsLangLabel)}</span>
+                            <select class="select-box" id="set-lang-select">
+                                <option value="en" ${draft.language === 'en' ? 'selected' : ''}>English</option>
+                                <option value="id" ${draft.language === 'id' ? 'selected' : ''}>Bahasa Indonesia</option>
+                            </select>
+                        </div>
+                        <div class="card-desc">${escapeHtml(t.modalDesc)}</div>
+                        <div class="modal-row">
+                            <input class="text-input" id="set-basedir-input" type="text" value="${escapeHtml(draft.baseDir)}" placeholder="${escapeHtml(t.modalPlaceholder)}" />
+                            <button class="btn" id="btn-set-browse">${escapeHtml(t.modalBrowse)}</button>
+                        </div>
+                        <div class="controls-left" style="gap:6px">
+                            <button class="btn btn-sm" id="btn-set-sync" title="${escapeHtml(t.modalSyncTooltip)}">${escapeHtml(t.modalSyncDefaults)}</button>
+                            <button class="btn btn-sm" id="btn-set-reset">${escapeHtml(t.modalReset)}</button>
+                        </div>
+                        <div class="modal-note">
+                            <div><strong>${escapeHtml(t.modalActiveConfig)}</strong> <code>${escapeHtml(s.confPath)}</code> &amp; <code>${escapeHtml(s.essentialsConfPath)}</code></div>
+                            <div>${escapeHtml(t.modalCopyNote)}</div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">${escapeHtml(t.settingsSecWindow)}</div>
+                        <div class="settings-field-row">
+                            <span class="settings-field-label">${escapeHtml(t.settingsCloseActionLabel)}</span>
+                            <select class="select-box" id="set-close-action">
+                                <option value="ask" ${draft.closeAction === 'ask' ? 'selected' : ''}>${escapeHtml(t.settingsCloseAsk)}</option>
+                                <option value="tray" ${draft.closeAction === 'tray' ? 'selected' : ''}>${escapeHtml(t.settingsCloseTray)}</option>
+                                <option value="quit" ${draft.closeAction === 'quit' ? 'selected' : ''}>${escapeHtml(t.settingsCloseQuit)}</option>
+                            </select>
+                        </div>
+                        <label class="settings-toggle-row">
+                            <input type="checkbox" id="chk-set-autostart" ${draft.autoStart ? 'checked' : ''} />
+                            <div>
+                                <div class="settings-toggle-title">${escapeHtml(t.settingsAutoStartLabel)}</div>
+                                <div class="settings-toggle-desc">${escapeHtml(t.settingsAutoStartDesc)}</div>
+                            </div>
+                        </label>
+                        <label class="settings-toggle-row settings-sub-row ${!draft.autoStart ? 'disabled' : ''}">
+                            <input type="checkbox" id="chk-set-start-tray" ${draft.startInTray ? 'checked' : ''} ${!draft.autoStart ? 'disabled' : ''} />
+                            <div>
+                                <div class="settings-toggle-title">${escapeHtml(t.settingsStartInTrayLabel)}</div>
+                                <div class="settings-toggle-desc">${escapeHtml(t.settingsStartInTrayDesc)}</div>
+                            </div>
+                        </label>
+                    </div>
+
+                    <div class="settings-section">
+                        <div class="settings-section-title">${escapeHtml(t.settingsSecUpdates)}</div>
+                        <label class="settings-toggle-row">
+                            <input type="checkbox" id="chk-set-autocheck" ${draft.autoCheckUpdates ? 'checked' : ''} />
+                            <div>
+                                <div class="settings-toggle-title">${escapeHtml(t.settingsAutoCheckLabel)}</div>
+                                <div class="settings-toggle-desc">${escapeHtml(t.settingsAutoCheckDesc)}</div>
+                            </div>
+                        </label>
+                        <div class="settings-field-row settings-sub-row">
+                            <span class="settings-field-label">${escapeHtml(t.settingsIntervalLabel)}</span>
+                            <select class="select-box" id="set-check-interval" ${!draft.autoCheckUpdates ? 'disabled' : ''}>
+                                ${intervals
+                                    .map(
+                                        (h) =>
+                                            `<option value="${h}" ${draft.autoCheckIntervalHours === h ? 'selected' : ''}>${escapeHtml(t.settingsIntervalHours(h))}</option>`,
+                                    )
+                                    .join('')}
+                            </select>
+                        </div>
+                        <label class="settings-toggle-row">
+                            <input type="checkbox" id="chk-set-delay-scan" ${draft.delayStartupScan ? 'checked' : ''} />
+                            <div>
+                                <div class="settings-toggle-title">${escapeHtml(t.settingsDelayScanLabel)}</div>
+                                <div class="settings-toggle-desc">${escapeHtml(t.settingsDelayScanDesc)}</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div></div>
+                    <div class="controls-right">
+                        <button class="btn btn-sm" id="btn-settings-cancel">${escapeHtml(t.modalCancel)}</button>
+                        <button class="btn btn-primary btn-sm" id="btn-settings-save">${escapeHtml(t.settingsSaveBtn)}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function renderCloseConfirmModal(): string {
+    if (!showCloseConfirmModal) return '';
+    const t = getT(currentLang());
+    return `
+        <div class="modal-backdrop" id="close-confirm-backdrop">
+            <div class="modal-card close-modal-card">
+                <div class="modal-header">
+                    <span class="modal-title">${escapeHtml(t.closeConfirmTitle)}</span>
+                    <button class="btn btn-sm" id="btn-close-confirm-x">✕</button>
+                </div>
+                <div class="close-modal-hero">
+                    <div class="close-modal-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 21h8M12 18v3M8 11l4 4 4-4"/></svg>
+                    </div>
+                    <div class="card-desc" style="margin:0">${escapeHtml(t.closeConfirmDesc)}</div>
+                </div>
+                <label class="settings-toggle-row">
+                    <input type="checkbox" id="chk-close-remember" ${closeConfirmRemember ? 'checked' : ''} />
+                    <span class="settings-toggle-title">${escapeHtml(t.closeConfirmRemember)}</span>
+                </label>
+                <div class="modal-footer">
+                    <button class="btn btn-sm" id="btn-close-cancel">${escapeHtml(t.modalCancel)}</button>
+                    <div class="controls-right">
+                        <button class="btn btn-danger btn-sm" id="btn-close-quit">${escapeHtml(t.closeConfirmQuitBtn)}</button>
+                        <button class="btn btn-primary btn-sm" id="btn-close-tray">${escapeHtml(t.closeConfirmTrayBtn)}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
 function renderDetailModal(): string {
     if (!detailTarget) return '';
     const t = getT(currentLang());
-    const det = getCachedDetails(detailTarget.wingetId, detailTarget.source);
-    const curated = detailTarget.appId ? getCuratedMeta(detailTarget.appId) : undefined;
+    const mgr = (detailTarget.manager || 'winget').toLowerCase();
+    const det = getCachedDetails(detailTarget.wingetId, detailTarget.source, mgr);
+    const curated = mgr === 'winget' && detailTarget.appId ? getCuratedMeta(detailTarget.appId) : undefined;
     const pinnedIDs = new Set((state?.essentials || []).map((e) => e.wingetId.toLowerCase()));
-    const isPinned = pinnedIDs.has(detailTarget.wingetId.toLowerCase());
-    const wingetMissing = !state?.wingetEnv?.wingetAvailable;
+    const isPinned = mgr === 'winget' && pinnedIDs.has(detailTarget.wingetId.toLowerCase());
+    const mgrReady = isExtraManagerAvailable(mgr);
 
     const title = det?.name || detailTarget.name;
-    const publisher = det?.publisher || curated?.publisher || '—';
+    const publisher = det?.publisher || curated?.publisher || det?.author || '—';
     const homepage = det?.homepage || det?.publisherUrl || '';
     const version = det?.version || detailTarget.version || '—';
-    const license = det?.license || curated?.license || '—';
+    const license = det?.license || curated?.license || (det?.licenseUrl ? shortDomain(det.licenseUrl) || 'License' : '—');
     const description = det?.description || detailTarget.fallbackDesc || '';
     const iconHtml = renderAppIcon(detailTarget.appId || detailTarget.wingetId, title, {
-        wingetId: detailTarget.wingetId,
+        wingetId: mgr === 'winget' ? detailTarget.wingetId : undefined,
         dataUrl: det?.iconDataUrl,
+        iconUrl: det?.iconUrl || detailTarget.iconUrl,
         sizeClass: 'lg',
     });
 
     const rows: string[] = [
         `<div class="detail-key">${escapeHtml(t.essPublisherLabel)}</div><div class="detail-val">${escapeHtml(publisher)}</div>`,
     ];
-    if (det?.author) {
+    if (det?.author && det.author !== publisher) {
         rows.push(`<div class="detail-key">${escapeHtml(t.essAuthorLabel)}</div><div class="detail-val">${escapeHtml(det.author)}</div>`);
     }
     rows.push(`<div class="detail-key">${escapeHtml(t.essVersionLabel.replace(/:$/, ''))}</div><div class="detail-val detail-val-mono">${escapeHtml(version)}</div>`);
-    rows.push(`<div class="detail-key">${escapeHtml(t.essLicenseLabel)}</div><div class="detail-val">${escapeHtml(license)}</div>`);
+    rows.push(
+        det?.licenseUrl
+            ? `<div class="detail-key">${escapeHtml(t.essLicenseLabel)}</div><div class="detail-val"><button class="detail-link-btn" data-open-url="${escapeHtml(det.licenseUrl)}">${escapeHtml(license)}</button></div>`
+            : `<div class="detail-key">${escapeHtml(t.essLicenseLabel)}</div><div class="detail-val">${escapeHtml(license)}</div>`,
+    );
+    if (det?.downloadCount && det.downloadCount > 0) {
+        rows.push(`<div class="detail-key">${escapeHtml(t.pkgDownloadCountLabel)}</div><div class="detail-val detail-val-mono">${escapeHtml(formatDownloadCount(det.downloadCount))}</div>`);
+    }
     const modalEssSize =
         det?.installerSize ||
-        (state?.essentials || []).find((e) => e.wingetId.toLowerCase() === detailTarget!.wingetId.toLowerCase())?.downloadSize ||
-        0;
+        (mgr === 'winget'
+            ? (state?.essentials || []).find((e) => e.wingetId.toLowerCase() === detailTarget!.wingetId.toLowerCase())?.downloadSize || 0
+            : 0);
     if (det?.releaseDate) {
         rows.push(`<div class="detail-key">${escapeHtml(t.essReleaseDateLabel)}</div><div class="detail-val detail-val-mono">${escapeHtml(det.releaseDate)}</div>`);
     }
@@ -1212,6 +1979,38 @@ function renderDetailModal(): string {
         rows.push(`<div class="detail-key">${escapeHtml(t.essSha256Label)}</div><div class="detail-val detail-val-mono">${escapeHtml(det.installerSha256)}</div>`);
     }
 
+    const screenshotsHtml =
+        det?.screenshots && det.screenshots.length > 0
+            ? `
+            <div>
+                <div class="nav-section-title" style="padding:0 0 4px">${escapeHtml(t.pkgScreenshotsLabel)}</div>
+                <div class="detail-screenshots-strip">
+                    ${det.screenshots
+                        .map(
+                            (shot) => `
+                            <button class="detail-shot-card" data-open-url="${escapeHtml(shot)}" title="${escapeHtml(shot)}">
+                                <img class="detail-shot-img" src="${escapeHtml(shot)}" loading="lazy" alt="" />
+                            </button>
+                        `,
+                        )
+                        .join('')}
+                </div>
+            </div>
+        `
+            : '';
+
+    const depsHtml =
+        det?.dependencies && det.dependencies.length > 0
+            ? `
+            <div>
+                <div class="nav-section-title" style="padding:0 0 4px">${escapeHtml(t.pkgDependenciesLabel)}</div>
+                <div class="detail-tags">
+                    ${det.dependencies.map((dp) => `<span class="badge badge-idle">${escapeHtml(dp)}</span>`).join('')}
+                </div>
+            </div>
+        `
+            : '';
+
     return `
         <div class="modal-backdrop" id="detail-modal-backdrop">
             <div class="modal-card detail-modal-card">
@@ -1222,9 +2021,7 @@ function renderDetailModal(): string {
                             <div class="modal-title">${escapeHtml(title)}</div>
                             <div class="card-title-row" style="margin-top:3px">
                                 <span class="card-id">[${escapeHtml(detailTarget.wingetId)}]</span>
-                                <span class="badge ${detailTarget.source === 'msstore' ? 'badge-store' : 'badge-cat'}">
-                                    ${escapeHtml(detailTarget.source || 'winget')}
-                                </span>
+                                ${renderManagerBadge(mgr, detailTarget.source)}
                             </div>
                         </div>
                     </div>
@@ -1235,6 +2032,7 @@ function renderDetailModal(): string {
                     ${detailLoading ? `<div class="modal-note">${escapeHtml(t.essDetailsLoading)}</div>` : ''}
                     ${detailError ? `<div class="conflict-banner">${escapeHtml(detailError)}</div>` : ''}
                     <div class="detail-grid">${rows.join('')}</div>
+                    ${screenshotsHtml}
                     ${
                         description
                             ? `
@@ -1247,6 +2045,7 @@ function renderDetailModal(): string {
                               ? `<div class="modal-note">${escapeHtml(t.essDetailsNoData)}</div>`
                               : ''
                     }
+                    ${depsHtml}
                     ${
                         det?.tags && det.tags.length > 0
                             ? `
@@ -1266,12 +2065,12 @@ function renderDetailModal(): string {
                         <button
                             class="btn btn-primary btn-sm"
                             id="btn-detail-install"
-                            ${busy || wingetMissing ? 'disabled' : ''}
+                            ${busy || !mgrReady ? 'disabled' : ''}
                         >
                             ${escapeHtml(t.essInstallSilent)}
                         </button>
                         ${
-                            !isPinned
+                            mgr === 'winget' && !isPinned
                                 ? `<button class="btn btn-sm" id="btn-detail-pin" ${busy ? 'disabled' : ''}>${escapeHtml(t.essPinToList)}</button>`
                                 : ''
                         }
@@ -1293,7 +2092,8 @@ function renderDetailModal(): string {
 function openPackageDetailModal(target: DetailTarget): void {
     detailTarget = target;
     detailError = '';
-    const existing = getCachedDetails(target.wingetId, target.source);
+    const mgr = (target.manager || 'winget').toLowerCase();
+    const existing = getCachedDetails(target.wingetId, target.source, mgr);
     if (existing && existing.loaded) {
         detailLoading = false;
         render(true);
@@ -1303,11 +2103,11 @@ function openPackageDetailModal(target: DetailTarget): void {
     detailLoading = true;
     render(true);
 
-    GetWingetPackageDetails(target.wingetId, target.source)
+    GetUniversalPackageDetails(mgr, target.wingetId, target.source)
         .then((det) => {
-            wingetDetailsByKey[detailKey(target.wingetId, target.source)] = det;
+            wingetDetailsByKey[detailKey(target.wingetId, target.source, mgr)] = det;
             if (det.id) {
-                wingetDetailsByKey[detailKey(det.id, det.source || target.source)] = det;
+                wingetDetailsByKey[detailKey(det.id, det.source || target.source, mgr)] = det;
             }
             detailLoading = false;
             render(true);
@@ -1371,7 +2171,9 @@ function hydrateCustomEssentialsIfNeeded(list: main.EssentialView[]): void {
 }
 
 function hydrateInstalledAppsIfNeeded(list: main.InstalledAppView[]): void {
-    const manageable = list.filter((a) => a.managedByWinget && (a.hasUpdate || installedFilter === 'all'));
+    const manageable = list.filter(
+        (a) => (a.manager || 'winget') === 'winget' && a.managedByWinget && (a.hasUpdate || installedFilter === 'all'),
+    );
     // Prioritize updatable entries first so download sizes & icons appear right away.
     const sorted = [...manageable].sort((a, b) => Number(b.hasUpdate) - Number(a.hasUpdate));
     hydrateDetailsBatch(
@@ -1387,40 +2189,54 @@ function hydrateInstalledAppsIfNeeded(list: main.InstalledAppView[]): void {
 
 function renderInstalledAppCard(app: main.InstalledAppView): string {
     const t = getT(currentLang());
-    const det = getCachedDetails(app.id, app.source);
-    const curated = app.curatedAppId ? getCuratedMeta(app.curatedAppId) : undefined;
+    const mgr = (app.manager || 'winget').toLowerCase();
+    const isWinget = mgr === 'winget';
+    const det = isWinget ? getCachedDetails(app.id, app.source) : undefined;
+    const curated = isWinget && app.curatedAppId ? getCuratedMeta(app.curatedAppId) : undefined;
     const iconID = app.curatedAppId || app.id;
-    const wingetMissing = !state?.wingetEnv?.wingetAvailable;
+    const mgrReady = isExtraManagerAvailable(mgr);
     const dlSize = app.downloadSize || det?.installerSize || 0;
+    const desc = det?.description || app.description || '';
 
     const metaStrip = renderMetaStrip({
         publisher: det?.publisher || curated?.publisher,
-        domain: shortDomain(det?.homepage || det?.publisherUrl) || curated?.domain,
+        domain: shortDomain(det?.homepage || det?.publisherUrl || app.homepage) || curated?.domain,
         license: det?.license || curated?.license,
         installerType: det?.installerType,
     });
 
-    const sourceBadge = app.managedByWinget
-        ? `<span class="badge ${app.source === 'msstore' ? 'badge-store' : 'badge-cat'}">${escapeHtml(app.source || 'winget')}</span>`
-        : `<span class="badge badge-idle" title="${escapeHtml(t.essLocalEntryNoUpdateTip)}">${escapeHtml(t.essBadgeLocalEntry)}</span>`;
+    const sourceBadge = isWinget
+        ? app.managedByWinget
+            ? `<span class="badge ${app.source === 'msstore' ? 'badge-store' : 'badge-cat'}">${escapeHtml(app.source || 'winget')}</span>`
+            : `<span class="badge badge-idle" title="${escapeHtml(t.essLocalEntryNoUpdateTip)}">${escapeHtml(t.essBadgeLocalEntry)}</span>`
+        : renderManagerBadge(mgr, app.source);
 
     const statusBadge = app.ignored
         ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeIgnored)}</span>`
-        : app.hasUpdate
-          ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(app.availableVer))}</span>`
-          : `<span class="badge badge-active">${escapeHtml(app.installedVer ? t.essBadgeInstalled(app.installedVer) : t.statusDetected)}</span>`;
+        : app.pauseUntil
+          ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgePausedUntil(app.pauseUntil))}</span>`
+          : app.skippedVersion
+            ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgeSkipped(app.skippedVersion))}</span>`
+            : app.hasUpdate
+              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(app.availableVer))}</span>`
+              : `<span class="badge badge-active">${escapeHtml(app.installedVer ? t.essBadgeInstalled(app.installedVer) : t.statusDetected)}</span>`;
 
     const compareBadge = app.ignored
         ? `<span class="badge badge-ignored">${escapeHtml(t.essBadgeUpdateIgnored)}</span>`
-        : app.hasUpdate
-          ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(app.availableVer))}</span>`
-          : `<span class="badge badge-active">${escapeHtml(t.statusUpToDate)}</span>`;
+        : app.pauseUntil
+          ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgePausedUntil(app.pauseUntil))}</span>`
+          : app.skippedVersion
+            ? `<span class="badge badge-ignored">${escapeHtml(t.pkgBadgeSkipped(app.skippedVersion))}</span>`
+            : app.hasUpdate
+              ? `<span class="badge badge-installed">${escapeHtml(t.statusUpdateTo(app.availableVer))}</span>`
+              : `<span class="badge badge-active">${escapeHtml(t.statusUpToDate)}</span>`;
 
     const actionsHtml = app.ignored
         ? `
             <button
                 class="btn btn-sm btn-restore"
                 data-action="winget-unignore"
+                data-mgr="${escapeHtml(mgr)}"
                 data-wid="${escapeHtml(app.id)}"
                 ${busy ? 'disabled' : ''}
                 title="${escapeHtml(t.essBtnRestoreTip)}"
@@ -1430,24 +2246,82 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
         `
         : `
             ${
-                app.hasUpdate && app.managedByWinget
+                app.hasUpdate && app.canUpdate
                     ? `
                     <button
                         class="btn btn-primary btn-sm"
-                        data-action="winget-update-raw"
+                        data-action="pkg-action"
+                        data-mgr="${escapeHtml(mgr)}"
                         data-name="${escapeHtml(app.name)}"
                         data-wid="${escapeHtml(app.id)}"
-                        data-source="${escapeHtml(app.source || 'winget')}"
-                        ${busy || wingetMissing ? 'disabled' : ''}
+                        data-source="${escapeHtml(app.source || '')}"
+                        data-mode="update"
+                        ${busy || !mgrReady ? 'disabled' : ''}
                     >
                         ${escapeHtml(t.btnUpdateTool)}
+                    </button>
+                    <button
+                        class="btn btn-sm"
+                        data-action="winget-skip-ver"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-name="${escapeHtml(app.name)}"
+                        data-wid="${escapeHtml(app.id)}"
+                        data-source="${escapeHtml(app.source || '')}"
+                        data-ver="${escapeHtml(app.availableVer)}"
+                        ${busy ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnSkipVersionTip(app.availableVer))}"
+                    >
+                        ${escapeHtml(`${t.pkgBtnSkipVersion} ${app.availableVer}`)}
+                    </button>
+                    <button
+                        class="btn btn-sm"
+                        data-action="winget-pause-7d"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-name="${escapeHtml(app.name)}"
+                        data-wid="${escapeHtml(app.id)}"
+                        data-source="${escapeHtml(app.source || '')}"
+                        data-days="7"
+                        ${busy ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnPause7dTip)}"
+                    >
+                        ${escapeHtml(t.pkgBtnPause7d)}
                     </button>
                 `
                     : ''
             }
+            ${
+                app.pauseUntil
+                    ? `
+                    <button
+                        class="btn btn-sm btn-restore"
+                        data-action="winget-unignore"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-wid="${escapeHtml(app.id)}"
+                        ${busy ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnResumeUpdatesTip)}"
+                    >
+                        ${escapeHtml(t.pkgBtnResumeUpdates)}
+                    </button>
+                `
+                    : app.skippedVersion
+                      ? `
+                    <button
+                        class="btn btn-sm btn-restore"
+                        data-action="winget-unignore"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-wid="${escapeHtml(app.id)}"
+                        ${busy ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnClearSkipTip)}"
+                    >
+                        ${escapeHtml(t.pkgBtnClearSkip)}
+                    </button>
+                `
+                      : ''
+            }
             <button
                 class="btn btn-sm"
                 data-action="winget-ignore"
+                data-mgr="${escapeHtml(mgr)}"
                 data-name="${escapeHtml(app.name)}"
                 data-wid="${escapeHtml(app.id)}"
                 data-source="${escapeHtml(app.source || '')}"
@@ -1457,7 +2331,7 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
                 ${escapeHtml(t.essBtnIgnore)}
             </button>
             ${
-                app.managedByWinget && !app.pinnedCurated
+                isWinget && app.managedByWinget && !app.pinnedCurated
                     ? `
                     <button
                         class="btn btn-sm"
@@ -1470,9 +2344,33 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
                         ${escapeHtml(t.essPinToList)}
                     </button>
                 `
-                    : app.pinnedCurated
+                    : isWinget && app.pinnedCurated
                       ? `<span class="badge badge-cat">${escapeHtml(t.essAlreadyPinned)}</span>`
                       : ''
+            }
+            ${
+                !isWinget && app.homepage
+                    ? `<button class="btn btn-sm" data-open-url="${escapeHtml(app.homepage)}">${escapeHtml(t.essOpenHomepage)}</button>`
+                    : ''
+            }
+            ${
+                app.canUninstall
+                    ? `
+                    <button
+                        class="btn btn-danger btn-sm"
+                        data-action="pkg-action"
+                        data-mgr="${escapeHtml(mgr)}"
+                        data-name="${escapeHtml(app.name)}"
+                        data-wid="${escapeHtml(app.id)}"
+                        data-source="${escapeHtml(app.source || '')}"
+                        data-mode="uninstall"
+                        ${busy || !mgrReady ? 'disabled' : ''}
+                        title="${escapeHtml(t.pkgBtnUninstallTip)}"
+                    >
+                        ${escapeHtml(t.pkgBtnUninstall)}
+                    </button>
+                `
+                    : ''
             }
         `;
 
@@ -1480,7 +2378,7 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
         <div class="card ${!app.ignored ? 'card-active' : ''}">
             <div class="card-top">
                 <div class="card-main-row">
-                    ${renderAppIcon(iconID, app.name, { wingetId: app.id, dataUrl: det?.iconDataUrl })}
+                    ${renderAppIcon(iconID, app.name, { wingetId: isWinget ? app.id : undefined, dataUrl: det?.iconDataUrl, iconUrl: app.iconUrl || det?.iconUrl })}
                     <div class="card-info">
                         <div class="card-title-row">
                             <span class="card-name">${escapeHtml(det?.name || app.name)}</span>
@@ -1488,7 +2386,7 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
                             ${sourceBadge}
                             ${app.ignored && app.wingetPinned ? `<span class="badge badge-cat">${escapeHtml(t.essBadgeWingetPinned)}</span>` : ''}
                         </div>
-                        ${det?.description ? `<div class="card-desc card-desc-clamp">${escapeHtml(det.description)}</div>` : ''}
+                        ${desc ? `<div class="card-desc card-desc-clamp">${escapeHtml(desc)}</div>` : ''}
                         ${app.ignoreReason && app.ignored ? `<div class="card-desc">${escapeHtml(app.ignoreReason)}</div>` : ''}
                         ${metaStrip}
                     </div>
@@ -1507,7 +2405,7 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
                             ? `
                             <span class="vc-sep">·</span>
                             <span class="vc-item">
-                                <span class="vc-label">${escapeHtml(t.essWingetLatestLabel)}</span>
+                                <span class="vc-label">${escapeHtml(isWinget ? t.essWingetLatestLabel : t.latestLabel)}</span>
                                 <span class="vc-val">v${escapeHtml(app.availableVer)}</span>
                             </span>
                         `
@@ -1521,17 +2419,19 @@ function renderInstalledAppCard(app: main.InstalledAppView): string {
                 <div class="controls-left">
                     ${actionsHtml}
                     ${
-                        app.managedByWinget
+                        !isWinget || app.managedByWinget
                             ? `
                             <button
                                 class="btn btn-sm"
                                 data-action="ess-detail"
+                                data-mgr="${escapeHtml(mgr)}"
                                 data-ess="${escapeHtml(app.curatedAppId || '')}"
                                 data-name="${escapeHtml(det?.name || app.name)}"
                                 data-wid="${escapeHtml(app.id)}"
-                                data-source="${escapeHtml(app.source || 'winget')}"
+                                data-source="${escapeHtml(app.source || mgr)}"
                                 data-ver="${escapeHtml(app.availableVer || app.installedVer || '')}"
-                                data-desc="${escapeHtml(det?.description || '')}"
+                                data-desc="${escapeHtml(det?.description || app.description || '')}"
+                                data-iconurl="${escapeHtml(app.iconUrl || det?.iconUrl || '')}"
                                 data-isess="${app.pinnedCurated ? '1' : '0'}"
                             >
                                 ${escapeHtml(t.essDetailsBtn)}
@@ -1555,16 +2455,39 @@ function renderInstalledWorkspaceView(s: main.DashboardState): string {
     const allRows = s.installedApps || [];
     const activeUpdates = allRows.filter((a) => !a.ignored && a.hasUpdate);
     const activeInstalled = allRows.filter((a) => !a.ignored);
-    const ignoredList = allRows.filter((a) => a.ignored);
+    const ignoredList = allRows.filter((a) => a.ignored || Boolean(a.skippedVersion) || Boolean(a.pauseUntil));
 
-    const baseList =
+    const statusList =
         installedFilter === 'updates' ? activeUpdates : installedFilter === 'ignored' ? ignoredList : activeInstalled;
-    const filtered = baseList.filter((a) =>
-        matchesSearch(`${a.name} ${a.id} ${a.installedVer} ${a.availableVer} ${a.source}`, essentialSearchQuery),
-    );
 
-    const updatableCount = activeUpdates.filter((a) => a.managedByWinget).length;
-    const wingetMissing = !s.wingetEnv?.wingetAvailable;
+    const mgrOrder: ManagerKey[] = ['winget', 'scoop', 'choco', 'npm', 'pnpm', 'bun', 'uv', 'pip', 'cargo', 'dotnet', 'psgallery'];
+    const mgrCounts: Record<string, number> = {};
+    for (const row of statusList) {
+        const m = (row.manager || 'winget').toLowerCase();
+        mgrCounts[m] = (mgrCounts[m] || 0) + 1;
+    }
+
+    const mgrChips = mgrOrder
+        .filter((m) => (mgrCounts[m] || 0) > 0 || installedMgrFilter === m)
+        .map(
+            (m) => `
+            <button class="mgr-chip ${installedMgrFilter === m ? 'active' : ''}" data-installed-mgr="${m}">
+                <span>${escapeHtml(managerDisplayName(m))}</span>
+                <span class="mgr-chip-count">${mgrCounts[m] || 0}</span>
+            </button>
+        `,
+        )
+        .join('');
+
+    const filtered = statusList.filter((a) => {
+        const m = (a.manager || 'winget').toLowerCase();
+        if (installedMgrFilter !== 'all' && m !== installedMgrFilter) return false;
+        return matchesSearch(`${a.name} ${a.id} ${a.installedVer} ${a.availableVer} ${a.source} ${m}`, essentialSearchQuery);
+    });
+
+    const updatableCount = activeUpdates.filter(
+        (a) => a.canUpdate && (installedMgrFilter === 'all' || (a.manager || 'winget').toLowerCase() === installedMgrFilter),
+    ).length;
     const emptyMsg =
         installedFilter === 'updates'
             ? t.essUpdatesEmpty
@@ -1599,12 +2522,25 @@ function renderInstalledWorkspaceView(s: main.DashboardState): string {
                     <button
                         class="btn btn-primary btn-sm"
                         id="btn-update-all-installed"
-                        ${busy || wingetMissing || updatableCount === 0 ? 'disabled' : ''}
+                        ${busy || updatableCount === 0 ? 'disabled' : ''}
                     >
                         ${escapeHtml(t.essUpdateAll(updatableCount))}
                     </button>
                 </div>
             </div>
+
+            ${
+                mgrChips
+                    ? `
+                    <div class="mgr-filter-row">
+                        <button class="mgr-chip ${installedMgrFilter === 'all' ? 'active' : ''}" data-installed-mgr="all">
+                            ${escapeHtml(t.pkgFilterAllManagers(statusList.length))}
+                        </button>
+                        ${mgrChips}
+                    </div>
+                `
+                    : ''
+            }
 
             <div class="cards-grid">
                 ${
@@ -1740,10 +2676,12 @@ function renderRuntimesView(s: main.DashboardState): { sidebarHtml: string; cont
     const stackPkgs = s.packages.filter(
         (p) => p.category === 'stack' && matchesSearch(`${p.name} ${p.id} ${p.description}`, runtimeSearchQuery),
     );
-    const cliTools = s.tools.filter((tl) =>
-        matchesSearch(`${tl.name} ${tl.id} ${tl.description} ${tl.commandHint}`, runtimeSearchQuery),
-    );
-    const activeApps = s.packages.filter((p) => Boolean(p.activeVer));
+    const matchesTool = (tl: tools.ToolStatus): boolean =>
+        matchesSearch(`${tl.name} ${tl.id} ${tl.description} ${tl.commandHint}`, runtimeSearchQuery);
+    const allCliSdk = s.tools.filter((tl) => tl.category !== 'pkgmgr');
+    const allPkgMgr = s.tools.filter((tl) => tl.category === 'pkgmgr');
+    const cliTools = allCliSdk.filter(matchesTool);
+    const pkgMgrTools = allPkgMgr.filter(matchesTool);
     const totalCore = s.packages.filter((p) => p.category !== 'stack').length;
     const totalStack = s.packages.filter((p) => p.category === 'stack').length;
 
@@ -1790,6 +2728,19 @@ function renderRuntimesView(s: main.DashboardState): { sidebarHtml: string; cont
                 </section>
             `;
         }
+        if (runtimeTab === 'all' || runtimeTab === 'pkgmgr') {
+            contentHtml += `
+                <section>
+                    <div class="section-header">
+                        <span class="section-title">${escapeHtml(t.secPkgMgrTitle)}</span>
+                        <span class="section-subtitle">${escapeHtml(t.secPkgMgrSubtitle)}</span>
+                    </div>
+                    <div class="cards-grid">
+                        ${pkgMgrTools.length > 0 ? pkgMgrTools.map(renderToolCard).join('') : `<div class="empty-state">${escapeHtml(t.emptyPkgMgr)}</div>`}
+                    </div>
+                </section>
+            `;
+        }
     }
 
     const sidebarHtml = `
@@ -1810,7 +2761,11 @@ function renderRuntimesView(s: main.DashboardState): { sidebarHtml: string; cont
             </button>
             <button class="nav-item ${runtimeTab === 'tools' ? 'active' : ''}" data-rt-tab="tools">
                 <span>${escapeHtml(t.navTools)}</span>
-                <span class="nav-count">${s.tools.length}</span>
+                <span class="nav-count">${allCliSdk.length}</span>
+            </button>
+            <button class="nav-item ${runtimeTab === 'pkgmgr' ? 'active' : ''}" data-rt-tab="pkgmgr">
+                <span>${escapeHtml(t.navPkgMgr)}</span>
+                <span class="nav-count">${allPkgMgr.length}</span>
             </button>
             <button class="nav-item ${runtimeTab === 'path' ? 'active' : ''}" data-rt-tab="path">
                 <span>${escapeHtml(t.navUserPath)}</span>
@@ -1819,21 +2774,27 @@ function renderRuntimesView(s: main.DashboardState): { sidebarHtml: string; cont
         </div>
 
         <div class="active-summary">
-            <div class="nav-section-title">${escapeHtml(t.activeInPathTitle)} (${activeApps.length})</div>
-            ${
-                activeApps.length > 0
-                    ? activeApps
-                          .map(
-                              (a) => `
-                        <div class="active-chip">
-                            <span class="active-chip-name">${escapeHtml(a.id)}</span>
-                            <span class="active-chip-ver">v${escapeHtml(a.activeVer)}</span>
-                        </div>
-                    `,
-                          )
-                          .join('')
-                    : `<div class="card-desc" style="padding:0 6px;font-size:11.5px">${escapeHtml(t.noActiveInPath)}</div>`
-            }
+            <div class="nav-section-title">${escapeHtml(t.envSectionTitle)}</div>
+            <button
+                class="sidebar-env-btn"
+                id="btn-output-modal"
+                ${busy ? 'disabled' : ''}
+                title="${escapeHtml(t.outputChangeTooltip)}"
+            >
+                <div class="sidebar-env-btn-head">
+                    <span>${escapeHtml(t.outputLabel)}</span>
+                    <span style="color: var(--accent-blue)">✎</span>
+                </div>
+                <div class="sidebar-env-btn-val" title="${escapeHtml(s.baseDir)}">${escapeHtml(s.baseDir)}</div>
+            </button>
+            <div class="sidebar-env-row">
+                <span class="sidebar-env-key">${escapeHtml(t.envPathScopeLabel)}</span>
+                <span class="sidebar-env-val sidebar-env-val-accent">HKCU User PATH</span>
+            </div>
+            <div class="sidebar-env-row">
+                <span class="sidebar-env-key">${escapeHtml(t.envLastCheckLabel)}</span>
+                <span class="sidebar-env-val">${escapeHtml(s.lastLtsCheck || t.envCheckedNever)}</span>
+            </div>
         </div>
     `;
 
@@ -1843,7 +2804,8 @@ function renderRuntimesView(s: main.DashboardState): { sidebarHtml: string; cont
 function renderEssentialsView(s: main.DashboardState): { sidebarHtml: string; contentHtml: string } {
     const t = getT(currentLang());
     const allEss = s.essentials || [];
-    const selectedCount = allEss.filter((e) => Boolean(checkedEssentials[e.id])).length;
+    const readyPkgMgrs = (s.pkgManagers || []).filter((m) => m.available);
+    const readyPkgMgrTip = readyPkgMgrs.map((m) => `${m.name}${m.version ? ` v${m.version}` : ''}`).join(', ');
 
     const countCat = (cat: string) => allEss.filter((e) => e.category === cat).length;
 
@@ -1958,24 +2920,100 @@ function renderEssentialsView(s: main.DashboardState): { sidebarHtml: string; co
         </div>
 
         <div class="active-summary">
-            <div class="nav-section-title">${escapeHtml(t.essBatchTitle)}</div>
-            <div class="card-desc" style="padding:0 4px">${escapeHtml(t.essSelectedCount(selectedCount))}</div>
-            <div class="controls-left" style="gap:6px">
-                <button class="btn btn-sm" id="btn-ess-select-missing" ${busy ? 'disabled' : ''}>${escapeHtml(t.essSelectMissing)}</button>
-                <button class="btn btn-sm" id="btn-ess-clear-sel" ${busy || selectedCount === 0 ? 'disabled' : ''}>${escapeHtml(t.essClearSel)}</button>
+            <div class="nav-section-title">${escapeHtml(t.envSectionTitle)}</div>
+            <div class="sidebar-env-row">
+                <span class="sidebar-env-key">${escapeHtml(t.envWingetLabel)}</span>
+                <span class="sidebar-env-val ${s.wingetEnv.wingetAvailable ? 'sidebar-env-val-ok' : 'sidebar-env-val-warn'}">
+                    ${escapeHtml(s.wingetEnv.wingetAvailable ? s.wingetEnv.wingetVersion || 'Ready' : t.envMissingLabel)}
+                </span>
             </div>
-            <button
-                class="btn btn-primary btn-sm"
-                id="btn-ess-install-batch"
-                style="justify-content:center;margin-top:4px"
-                ${busy || selectedCount === 0 || !s.wingetEnv.wingetAvailable ? 'disabled' : ''}
-            >
-                ${escapeHtml(t.essInstallSelected(selectedCount))}
-            </button>
+            <div class="sidebar-env-row" title="${escapeHtml(readyPkgMgrTip)}">
+                <span class="sidebar-env-key">${escapeHtml(t.envPkgMgrLabel)}</span>
+                <span class="sidebar-env-val sidebar-env-val-accent">${escapeHtml(t.pkgManagersPill(readyPkgMgrs.length))}</span>
+            </div>
+            <div class="sidebar-env-row">
+                <span class="sidebar-env-key">${escapeHtml(t.envPrivilegeLabel)}</span>
+                <span class="sidebar-env-val ${s.wingetEnv.isAdmin ? 'sidebar-env-val-ok' : 'sidebar-env-val-warn'}">
+                    ${escapeHtml(s.wingetEnv.isAdmin ? t.envPrivilegeAdmin : t.envPrivilegeStandard)}
+                </span>
+            </div>
         </div>
     `;
 
     return { sidebarHtml, contentHtml };
+}
+
+function windowMaximizeIcon(isMax: boolean): string {
+    if (isMax) {
+        return `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="3.5" width="6.5" height="6.5" rx="0.8"/><path d="M4 3.5V2.2a.7.7 0 0 1 .7-.7h5.1a.7.7 0 0 1 .7.7v5.1a.7.7 0 0 1-.7.7H8.5"/></svg>`;
+    }
+    return `<svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="2" width="8" height="8" rx="1"/></svg>`;
+}
+
+function renderWindowControls(lang: Lang): string {
+    const t = getT(lang);
+    const maxTip = windowMaximized ? t.winRestoreTip : t.winMaximizeTip;
+    return `
+        <div class="window-controls">
+            <button class="win-btn" id="btn-win-min" title="${escapeHtml(t.winMinimizeTip)}" aria-label="${escapeHtml(t.winMinimizeTip)}">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.25"><path d="M2 6h8"/></svg>
+            </button>
+            <button class="win-btn" id="btn-win-max" title="${escapeHtml(maxTip)}" aria-label="${escapeHtml(maxTip)}">
+                ${windowMaximizeIcon(windowMaximized)}
+            </button>
+            <button class="win-btn win-btn-close" id="btn-win-close" title="${escapeHtml(t.winCloseTip)}" aria-label="${escapeHtml(t.winCloseTip)}">
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg>
+            </button>
+        </div>
+    `;
+}
+
+function updateWindowControlDom(): void {
+    const t = getT(currentLang());
+    const rootEl = document.getElementById('app');
+    rootEl?.classList.toggle('window-maximized', windowMaximized);
+    const maxBtn = document.getElementById('btn-win-max');
+    if (maxBtn) {
+        const tip = windowMaximized ? t.winRestoreTip : t.winMaximizeTip;
+        maxBtn.title = tip;
+        maxBtn.setAttribute('aria-label', tip);
+        maxBtn.innerHTML = windowMaximizeIcon(windowMaximized);
+    }
+}
+
+function syncWindowMaximizedState(): void {
+    WindowIsMaximised()
+        .then((isMax) => {
+            windowMaximized = Boolean(isMax);
+            updateWindowControlDom();
+        })
+        .catch(() => {
+            // Safe to ignore in headless browser preview without Wails runtime.
+        });
+}
+
+function bindWindowControlListeners(): void {
+    document.getElementById('btn-win-min')?.addEventListener('click', () => {
+        MinimizeWindow().catch(() => WindowMinimise());
+    });
+    document.getElementById('btn-win-max')?.addEventListener('click', () => {
+        WindowToggleMaximise();
+        setTimeout(syncWindowMaximizedState, 60);
+    });
+    document.getElementById('btn-win-close')?.addEventListener('click', () => {
+        const act = state?.settings?.closeAction || 'ask';
+        if (act === 'tray') {
+            HideToTray().catch(() => Quit());
+            return;
+        }
+        if (act === 'quit') {
+            QuitApp().catch(() => Quit());
+            return;
+        }
+        closeConfirmRemember = false;
+        showCloseConfirmModal = true;
+        render(true);
+    });
 }
 
 function render(skipScrollCapture = false): void {
@@ -1983,9 +3021,32 @@ function render(skipScrollCapture = false): void {
     const t = getT(lang);
 
     if (!state) {
-        appRoot.innerHTML = `<div class="empty-state" style="margin:auto">${escapeHtml(t.loading)}</div>`;
+        appRoot.innerHTML = `
+            <header class="topbar">
+                <div class="brand">
+                    <div class="brand-mark">&gt;_</div>
+                    <span class="brand-title">UniDevUI</span>
+                </div>
+                <div class="topbar-actions">
+                    ${renderWindowControls(lang)}
+                </div>
+            </header>
+            <div class="empty-state" style="margin:auto">${escapeHtml(t.loading)}</div>
+        `;
+        bindWindowControlListeners();
+        updateWindowControlDom();
         return;
     }
+
+    const focusedEl = document.activeElement as HTMLElement | null;
+    const focusedInputId =
+        focusedEl && (focusedEl.id === 'winget-search-input' || focusedEl.id === 'search-input' || focusedEl.id === 'ess-search-input')
+            ? focusedEl.id
+            : '';
+    const focusedSelStart =
+        focusedInputId && focusedEl instanceof HTMLInputElement ? (focusedEl.selectionStart ?? focusedEl.value.length) : 0;
+    const focusedSelEnd =
+        focusedInputId && focusedEl instanceof HTMLInputElement ? (focusedEl.selectionEnd ?? focusedSelStart) : focusedSelStart;
 
     if (!skipScrollCapture) {
         const prevContent = document.querySelector<HTMLElement>('.content');
@@ -2002,23 +3063,6 @@ function render(skipScrollCapture = false): void {
         primaryTab === 'runtimes' ? renderRuntimesView(state) : renderEssentialsView(state);
 
     const selectedEssCount = (state.essentials || []).filter((e) => Boolean(checkedEssentials[e.id])).length;
-
-    const topbarLeftMeta =
-        primaryTab === 'runtimes'
-            ? `
-                <button class="pill pill-btn" id="btn-output-modal" ${busy ? 'disabled' : ''} title="${escapeHtml(t.outputChangeTooltip)}">
-                    <span>${escapeHtml(t.outputLabel)}: ${escapeHtml(state.baseDir)}</span>
-                    <span style="color: var(--accent-blue)">✎</span>
-                </button>
-                <span class="pill pill-accent">HKCU User PATH</span>
-                ${state.lastLtsCheck ? `<span class="pill">${escapeHtml(t.checkedAt(state.lastLtsCheck))}</span>` : ''}
-            `
-            : `
-                <span class="pill ${state.wingetEnv.wingetAvailable ? 'pill-accent' : ''}">
-                    ${escapeHtml(state.wingetEnv.wingetAvailable ? `Winget ${state.wingetEnv.wingetVersion}` : 'Winget Missing')}
-                </span>
-                <span class="pill">${escapeHtml(state.wingetEnv.isAdmin ? 'Admin' : 'Standard User')}</span>
-            `;
 
     const topbarRightActions =
         primaryTab === 'runtimes'
@@ -2049,7 +3093,6 @@ function render(skipScrollCapture = false): void {
                     <button class="mode-tab ${primaryTab === 'runtimes' ? 'active' : ''}" data-primary-tab="runtimes">${escapeHtml(t.tabRuntimes)}</button>
                     <button class="mode-tab ${primaryTab === 'essentials' ? 'active' : ''}" data-primary-tab="essentials">${escapeHtml(t.tabWindowsApps)}</button>
                 </div>
-                ${topbarLeftMeta}
             </div>
             <div class="topbar-actions">
                 <div class="lang-switch" title="Language / Bahasa">
@@ -2062,6 +3105,15 @@ function render(skipScrollCapture = false): void {
                     id="btn-about"
                     title="${escapeHtml(state.appUpdate?.hasUpdate ? t.aboutUpdateAvailableTip(state.appUpdate.latestVersion) : t.btnAboutTooltip)}"
                 >ⓘ ${escapeHtml(t.btnAbout)}${state.appUpdate?.hasUpdate ? ` <span class="update-pill">${escapeHtml(t.aboutUpdateAvailableBadge(state.appUpdate.latestVersion))}</span>` : ''}</button>
+                <button
+                    class="btn btn-topbar-icon"
+                    id="btn-settings"
+                    title="${escapeHtml(t.btnSettingsTooltip)}"
+                    aria-label="${escapeHtml(t.settingsTitle)}"
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+                ${renderWindowControls(lang)}
             </div>
         </header>
 
@@ -2069,65 +3121,61 @@ function render(skipScrollCapture = false): void {
             <aside class="sidebar">
                 ${sidebarHtml}
             </aside>
-            <main class="content">
-                ${contentHtml}
-            </main>
+            <div class="main-pane">
+                <main class="content">
+                    ${contentHtml}
+                </main>
+                <section class="terminal-drawer ${terminalCollapsed ? 'collapsed' : ''}">
+                    <div class="terminal-header">
+                        <div class="terminal-title-group">
+                            <span class="terminal-label">${escapeHtml(t.terminalTitle)}</span>
+                            <div id="progress-slot">${renderProgressInline()}</div>
+                        </div>
+                        <div class="terminal-actions">
+                            ${busy ? `<button class="btn btn-danger btn-sm" id="btn-cancel">${escapeHtml(t.btnCancel)}</button>` : ''}
+                            <button
+                                class="btn btn-sm btn-term-icon"
+                                id="btn-clear-log"
+                                title="${escapeHtml(t.btnClear)}"
+                                aria-label="${escapeHtml(t.btnClear)}"
+                            >
+                                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M4.5 4.5l.7 8.5a1 1 0 0 0 1 .9h3.6a1 1 0 0 0 1-.9l.7-8.5"/><path d="M6.75 7.25v4M9.25 7.25v4"/></svg>
+                            </button>
+                            <button
+                                class="btn btn-sm btn-term-icon"
+                                id="btn-toggle-term"
+                                title="${escapeHtml(terminalCollapsed ? t.btnExpand : t.btnMinimize)}"
+                                aria-label="${escapeHtml(terminalCollapsed ? t.btnExpand : t.btnMinimize)}"
+                            >
+                                ${
+                                    terminalCollapsed
+                                        ? `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5L8 6l4.5 4.5"/></svg>`
+                                        : `<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5L8 10l4.5-4.5"/></svg>`
+                                }
+                            </button>
+                        </div>
+                    </div>
+                    <div class="terminal-body" id="terminal-body"></div>
+                </section>
+            </div>
         </div>
 
-        <section class="terminal-drawer ${terminalCollapsed ? 'collapsed' : ''}">
-            <div class="terminal-header">
-                <div class="terminal-title-group">
-                    <span class="terminal-label">${escapeHtml(t.terminalTitle)}</span>
-                    <div id="progress-slot">${renderProgressInline()}</div>
-                </div>
-                <div class="terminal-actions">
-                    ${busy ? `<button class="btn btn-danger btn-sm" id="btn-cancel">${escapeHtml(t.btnCancel)}</button>` : ''}
-                    <button class="btn btn-sm" id="btn-clear-log">${escapeHtml(t.btnClear)}</button>
-                    <button class="btn btn-sm" id="btn-toggle-term">${escapeHtml(terminalCollapsed ? t.btnExpand : t.btnMinimize)}</button>
-                </div>
-            </div>
-            <div class="terminal-body" id="terminal-body"></div>
-        </section>
-
-        ${
-            showPathModal
-                ? `
-            <div class="modal-backdrop" id="output-modal-backdrop">
-                <div class="modal-card">
-                    <div class="modal-header">
-                        <span class="modal-title">${escapeHtml(t.modalTitle)}</span>
-                        <button class="btn btn-sm" id="btn-modal-close">✕</button>
-                    </div>
-                    <div class="card-desc">${escapeHtml(t.modalDesc)}</div>
-                    <div class="modal-row">
-                        <input class="text-input" id="output-dir-input" type="text" value="${escapeHtml(outputDirDraft || state.baseDir)}" placeholder="${escapeHtml(t.modalPlaceholder)}" />
-                        <button class="btn" id="btn-modal-browse">${escapeHtml(t.modalBrowse)}</button>
-                    </div>
-                    <div class="modal-note">
-                        <div><strong>${escapeHtml(t.modalActiveConfig)}</strong> <code>${escapeHtml(state.confPath)}</code> &amp; <code>${escapeHtml(state.essentialsConfPath)}</code></div>
-                        <div>${escapeHtml(t.modalCopyNote)}</div>
-                    </div>
-                    <div class="modal-footer">
-                        <div class="controls-left">
-                            <button class="btn btn-sm" id="btn-modal-sync" title="${escapeHtml(t.modalSyncTooltip)}">${escapeHtml(t.modalSyncDefaults)}</button>
-                            <button class="btn btn-sm" id="btn-modal-reset">${escapeHtml(t.modalReset)}</button>
-                        </div>
-                        <div class="controls-right">
-                            <button class="btn btn-sm" id="btn-modal-cancel">${escapeHtml(t.modalCancel)}</button>
-                            <button class="btn btn-primary btn-sm" id="btn-modal-save">${escapeHtml(t.modalSave)}</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `
-                : ''
-        }
+        ${renderSettingsModal(state)}
+        ${renderCloseConfirmModal()}
         ${renderDetailModal()}
         ${renderAboutModal(state)}
     `;
 
     renderTerminalLinesOnly();
     bindEventListeners();
+    updateWindowControlDom();
+    if (focusedInputId) {
+        const freshInput = document.getElementById(focusedInputId) as HTMLInputElement | null;
+        if (freshInput) {
+            freshInput.focus();
+            freshInput.setSelectionRange(focusedSelStart, focusedSelEnd);
+        }
+    }
     if (primaryTab === 'essentials') {
         hydrateCustomEssentialsIfNeeded(state.essentials || []);
         if (essentialTab === 'installed') {
@@ -2194,63 +3242,78 @@ function triggerBatchInstall(): void {
     InstallSelectedEssentials(queue).catch((e) => reportErr(e));
 }
 
+function clearUnifiedCatalogSearch(): void {
+    wingetSearchToken++;
+    wingetCatalogQuery = '';
+    wingetSearchResults = [];
+    extraSearchByGroup = {};
+    unifiedJSMgrs = [];
+    unifiedPyMgrs = [];
+    unifiedSearchPending = [];
+    unifiedSearchTotal = 0;
+    unifiedSearchDone = false;
+    searchResultFilter = 'all';
+    wingetSearching = false;
+    wingetEnriching = false;
+    wingetSearchExecuted = false;
+    CancelUnifiedSearch().catch(() => {
+        // Ignore cancellation error on cleanup.
+    });
+    render();
+}
+
 function runWingetCatalogSearch(queryOverride?: string): void {
     const q = (queryOverride ?? wingetCatalogQuery).trim();
     if (!q) return;
     wingetCatalogQuery = q;
+    const token = ++wingetSearchToken;
+    searchResultFilter = 'all';
+    wingetSearchResults = [];
+    extraSearchByGroup = {};
+    unifiedJSMgrs = [];
+    unifiedPyMgrs = [];
+    unifiedSearchPending = [];
+    unifiedSearchTotal = 0;
+    unifiedSearchDone = false;
     wingetSearching = true;
     wingetEnriching = false;
     wingetSearchExecuted = true;
-    const token = ++wingetSearchToken;
     render();
-    SearchWingetApps(q)
-        .then((rows) => {
+
+    StartUnifiedSearch(token, q)
+        .then((startInfo) => {
             if (token !== wingetSearchToken) return;
-            const list = rows || [];
-            wingetSearchResults = list;
-            wingetSearching = false;
-            if (list.length > 0) {
-                wingetEnriching = true;
+            unifiedSearchTotal = startInfo.total || 0;
+            if ((startInfo.jsMgrs || []).length > 0 && unifiedJSMgrs.length === 0) {
+                unifiedJSMgrs = startInfo.jsMgrs as ManagerKey[];
+            }
+            if ((startInfo.pyMgrs || []).length > 0 && unifiedPyMgrs.length === 0) {
+                unifiedPyMgrs = startInfo.pyMgrs as ManagerKey[];
+            }
+            if (!startInfo.total) {
+                wingetSearching = false;
+                unifiedSearchDone = true;
+                unifiedSearchPending = [];
                 render();
-                EnrichWingetSearch(list)
-                    .then((detailsList) => {
-                        if (token !== wingetSearchToken) return;
-                        for (let i = 0; i < (detailsList || []).length; i++) {
-                            const det = detailsList[i];
-                            const orig = list[i];
-                            if (det && (det.id || orig?.id)) {
-                                const k1 = detailKey(det.id || orig.id, det.source || orig?.source);
-                                wingetDetailsByKey[k1] = det;
-                                if (orig?.id) {
-                                    wingetDetailsByKey[detailKey(orig.id, orig.source)] = det;
-                                }
-                            }
-                        }
-                    })
-                    .catch(() => {
-                        // Search results still usable without enrichment.
-                    })
-                    .finally(() => {
-                        if (token === wingetSearchToken) {
-                            wingetEnriching = false;
-                            render(true);
-                        }
-                    });
-            } else {
-                render();
+                return;
+            }
+            if (!unifiedSearchDone && unifiedSearchPending.length === 0 && (startInfo.sources || []).length > 0) {
+                unifiedSearchPending = startInfo.sources;
+                render(true);
             }
         })
         .catch((e) => {
             if (token !== wingetSearchToken) return;
-            wingetSearchResults = [];
             wingetSearching = false;
-            wingetEnriching = false;
+            unifiedSearchDone = true;
+            unifiedSearchPending = [];
             reportErr(e);
             render();
         });
 }
 
 function bindEventListeners(): void {
+    bindWindowControlListeners();
     document.querySelectorAll<HTMLButtonElement>('[data-primary-tab]').forEach((btn) => {
         btn.addEventListener('click', () => {
             const nextPrimary = btn.dataset.primaryTab as PrimaryTab | undefined;
@@ -2276,27 +3339,42 @@ function bindEventListeners(): void {
         });
     });
 
-    document.getElementById('btn-output-modal')?.addEventListener('click', () => {
-        outputDirDraft = state?.baseDir || '';
-        showPathModal = true;
-        render();
+    document.getElementById('btn-output-modal')?.addEventListener('click', openSettingsModal);
+    document.getElementById('btn-settings')?.addEventListener('click', openSettingsModal);
+
+    const closeSettingsModal = (): void => {
+        showSettingsModal = false;
+        settingsDraft = null;
+        render(true);
+    };
+    document.getElementById('btn-settings-close')?.addEventListener('click', closeSettingsModal);
+    document.getElementById('btn-settings-cancel')?.addEventListener('click', closeSettingsModal);
+    document.getElementById('settings-modal-backdrop')?.addEventListener('click', (ev) => {
+        if (ev.target === ev.currentTarget) closeSettingsModal();
     });
 
-    document.getElementById('btn-modal-close')?.addEventListener('click', () => {
-        showPathModal = false;
-        render();
+    const closeConfirmModal = (): void => {
+        showCloseConfirmModal = false;
+        render(true);
+    };
+    document.getElementById('btn-close-confirm-x')?.addEventListener('click', closeConfirmModal);
+    document.getElementById('btn-close-cancel')?.addEventListener('click', closeConfirmModal);
+    document.getElementById('close-confirm-backdrop')?.addEventListener('click', (ev) => {
+        if (ev.target === ev.currentTarget) closeConfirmModal();
     });
-
-    document.getElementById('btn-modal-cancel')?.addEventListener('click', () => {
-        showPathModal = false;
-        render();
+    const rememberEl = document.getElementById('chk-close-remember') as HTMLInputElement | null;
+    rememberEl?.addEventListener('change', () => {
+        closeConfirmRemember = rememberEl.checked;
     });
-
-    document.getElementById('output-modal-backdrop')?.addEventListener('click', (ev) => {
-        if (ev.target === ev.currentTarget) {
-            showPathModal = false;
-            render();
-        }
+    document.getElementById('btn-close-tray')?.addEventListener('click', () => {
+        showCloseConfirmModal = false;
+        render(true);
+        ConfirmCloseAction('tray', closeConfirmRemember).catch((e) => reportErr(e));
+    });
+    document.getElementById('btn-close-quit')?.addEventListener('click', () => {
+        showCloseConfirmModal = false;
+        render(true);
+        ConfirmCloseAction('quit', closeConfirmRemember).catch((e) => reportErr(e));
     });
 
     document.getElementById('btn-about')?.addEventListener('click', () => {
@@ -2335,51 +3413,95 @@ function bindEventListeners(): void {
         ApplyAppUpdate().catch((e) => reportErr(e));
     });
 
-    const dirInputEl = document.getElementById('output-dir-input') as HTMLInputElement | null;
-    dirInputEl?.addEventListener('input', (ev) => {
-        outputDirDraft = (ev.target as HTMLInputElement).value;
+    const setLangEl = document.getElementById('set-lang-select') as HTMLSelectElement | null;
+    setLangEl?.addEventListener('change', () => {
+        if (settingsDraft) settingsDraft.language = setLangEl.value;
     });
-    dirInputEl?.addEventListener('keydown', (ev) => {
+
+    const setBaseEl = document.getElementById('set-basedir-input') as HTMLInputElement | null;
+    setBaseEl?.addEventListener('input', () => {
+        if (settingsDraft) settingsDraft.baseDir = setBaseEl.value;
+    });
+    setBaseEl?.addEventListener('keydown', (ev) => {
         if (ev.key === 'Enter') {
-            document.getElementById('btn-modal-save')?.click();
-        } else if (ev.key === 'Escape') {
-            showPathModal = false;
-            render();
+            document.getElementById('btn-settings-save')?.click();
         }
     });
 
-    document.getElementById('btn-modal-browse')?.addEventListener('click', () => {
+    document.getElementById('btn-set-browse')?.addEventListener('click', () => {
         PickOutputDirectory()
             .then((picked) => {
-                if (picked) {
-                    outputDirDraft = picked;
-                    render();
+                if (picked && settingsDraft) {
+                    settingsDraft.baseDir = picked;
+                    render(true);
                 }
             })
             .catch((e) => reportErr(e));
     });
 
-    document.getElementById('btn-modal-reset')?.addEventListener('click', () => {
-        outputDirDraft = 'C:\\AppPath';
-        render();
+    document.getElementById('btn-set-reset')?.addEventListener('click', () => {
+        if (settingsDraft) {
+            settingsDraft.baseDir = 'C:\\AppPath';
+            render(true);
+        }
     });
 
-    document.getElementById('btn-modal-sync')?.addEventListener('click', () => {
+    document.getElementById('btn-set-sync')?.addEventListener('click', () => {
         SyncDefaultPackages()
             .then((nextState) => {
                 state = nextState;
-                showPathModal = false;
+                showSettingsModal = false;
+                settingsDraft = null;
                 render();
             })
             .catch((e) => reportErr(e));
     });
 
-    document.getElementById('btn-modal-save')?.addEventListener('click', () => {
-        const target = (document.getElementById('output-dir-input') as HTMLInputElement | null)?.value || outputDirDraft;
-        SetOutputDir(target)
+    const setCloseEl = document.getElementById('set-close-action') as HTMLSelectElement | null;
+    setCloseEl?.addEventListener('change', () => {
+        if (settingsDraft) settingsDraft.closeAction = setCloseEl.value;
+    });
+
+    const setAutoStartEl = document.getElementById('chk-set-autostart') as HTMLInputElement | null;
+    setAutoStartEl?.addEventListener('change', () => {
+        if (settingsDraft) {
+            settingsDraft.autoStart = setAutoStartEl.checked;
+            render(true);
+        }
+    });
+
+    const setStartTrayEl = document.getElementById('chk-set-start-tray') as HTMLInputElement | null;
+    setStartTrayEl?.addEventListener('change', () => {
+        if (settingsDraft) settingsDraft.startInTray = setStartTrayEl.checked;
+    });
+
+    const setAutoCheckEl = document.getElementById('chk-set-autocheck') as HTMLInputElement | null;
+    setAutoCheckEl?.addEventListener('change', () => {
+        if (settingsDraft) {
+            settingsDraft.autoCheckUpdates = setAutoCheckEl.checked;
+            render(true);
+        }
+    });
+
+    const setIntervalEl = document.getElementById('set-check-interval') as HTMLSelectElement | null;
+    setIntervalEl?.addEventListener('change', () => {
+        if (settingsDraft) settingsDraft.autoCheckIntervalHours = parseInt(setIntervalEl.value, 10) || 6;
+    });
+
+    const setDelayScanEl = document.getElementById('chk-set-delay-scan') as HTMLInputElement | null;
+    setDelayScanEl?.addEventListener('change', () => {
+        if (settingsDraft) settingsDraft.delayStartupScan = setDelayScanEl.checked;
+    });
+
+    document.getElementById('btn-settings-save')?.addEventListener('click', () => {
+        if (!state) return;
+        const draft = getEffectiveSettingsDraft(state);
+        if (setBaseEl) draft.baseDir = setBaseEl.value;
+        SaveAppSettings(draft)
             .then((nextState) => {
                 state = nextState;
-                showPathModal = false;
+                showSettingsModal = false;
+                settingsDraft = null;
                 render();
             })
             .catch((e) => reportErr(e));
@@ -2479,6 +3601,9 @@ function bindEventListeners(): void {
     document.getElementById('btn-winget-search')?.addEventListener('click', () => {
         runWingetCatalogSearch();
     });
+    document.getElementById('btn-winget-search-clear')?.addEventListener('click', () => {
+        clearUnifiedCatalogSearch();
+    });
 
     document.getElementById('btn-jump-winget-search')?.addEventListener('click', () => {
         const q = essentialSearchQuery.trim();
@@ -2519,18 +3644,58 @@ function bindEventListeners(): void {
         });
     });
 
+    document.querySelectorAll<HTMLButtonElement>('[data-installed-mgr]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const nextMgr = btn.dataset.installedMgr as InstalledMgrFilterKey | undefined;
+            if (nextMgr && nextMgr !== installedMgrFilter) {
+                captureCurrentScroll();
+                installedMgrFilter = nextMgr;
+                render(true);
+            }
+        });
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('[data-search-filter]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const nextFilter = btn.dataset.searchFilter as SearchFilterKey | undefined;
+            if (nextFilter && nextFilter !== searchResultFilter) {
+                captureCurrentScroll();
+                searchResultFilter = nextFilter;
+                render(true);
+            }
+        });
+    });
+
+    document.querySelectorAll<HTMLSelectElement>('[data-role="search-js-mgr"]').forEach((sel) => {
+        sel.addEventListener('change', () => {
+            const pkgKey = sel.dataset.pkgKey;
+            if (pkgKey) {
+                selectedSearchJSMgrByPkg[pkgKey] = sel.value as ManagerKey;
+                render(true);
+            }
+        });
+    });
+
     document.getElementById('btn-ignored-conf')?.addEventListener('click', () => {
         OpenIgnoredConf().catch((e) => reportErr(e));
     });
 
     document.getElementById('btn-update-all-installed')?.addEventListener('click', () => {
         const targets = (state?.installedApps || [])
-            .filter((a) => !a.ignored && a.hasUpdate && a.managedByWinget)
+            .filter(
+                (a) =>
+                    !a.ignored &&
+                    a.hasUpdate &&
+                    a.canUpdate &&
+                    (installedMgrFilter === 'all' || (a.manager || 'winget').toLowerCase() === installedMgrFilter),
+            )
             .map((a) =>
                 main.WingetUpdateTarget.createFrom({
+                    manager: a.manager || 'winget',
                     name: a.name,
                     wingetId: a.id,
-                    source: a.source || 'winget',
+                    source: a.source || a.manager || 'winget',
+                    availableVer: a.availableVer || '',
                 }),
             );
         if (targets.length > 0) {
@@ -2563,24 +3728,6 @@ function bindEventListeners(): void {
                 render();
             })
             .catch((e) => reportErr(e));
-    });
-
-    document.getElementById('btn-ess-select-missing')?.addEventListener('click', () => {
-        for (const item of state?.essentials || []) {
-            if (!item.installed) {
-                checkedEssentials[item.id] = true;
-            }
-        }
-        render();
-    });
-
-    document.getElementById('btn-ess-clear-sel')?.addEventListener('click', () => {
-        checkedEssentials = {};
-        render();
-    });
-
-    document.getElementById('btn-ess-install-batch')?.addEventListener('click', () => {
-        triggerBatchInstall();
     });
 
     document.getElementById('btn-topbar-install-batch')?.addEventListener('click', () => {
@@ -2696,6 +3843,15 @@ function bindEventListeners(): void {
                 if (essID) {
                     RunEssentialTool(essID, mode, essVer).catch((e) => reportErr(e));
                 }
+            } else if (action === 'pkg-action') {
+                const mgr = btn.dataset.mgr || 'winget';
+                const name = btn.dataset.name || '';
+                const wid = btn.dataset.wid || '';
+                const source = btn.dataset.source || '';
+                const mode = btn.dataset.mode || 'install';
+                if (wid) {
+                    RunPackageAction(mgr, wid, name, source, mode).catch((e) => reportErr(e));
+                }
             } else if (action === 'winget-install-raw') {
                 const name = btn.dataset.name || '';
                 const wid = btn.dataset.wid || '';
@@ -2710,12 +3866,41 @@ function bindEventListeners(): void {
                 if (wid) {
                     UpdateWingetByID(name, wid, source).catch((e) => reportErr(e));
                 }
+            } else if (action === 'winget-skip-ver') {
+                const mgr = btn.dataset.mgr || 'winget';
+                const name = btn.dataset.name || '';
+                const wid = btn.dataset.wid || '';
+                const source = btn.dataset.source || '';
+                const ver = btn.dataset.ver || '';
+                if (wid && ver) {
+                    SkipInstalledAppVersion(mgr, wid, name, source, ver)
+                        .then((nextState) => {
+                            state = nextState;
+                            render();
+                        })
+                        .catch((e) => reportErr(e));
+                }
+            } else if (action === 'winget-pause-7d') {
+                const mgr = btn.dataset.mgr || 'winget';
+                const name = btn.dataset.name || '';
+                const wid = btn.dataset.wid || '';
+                const source = btn.dataset.source || '';
+                const days = Number(btn.dataset.days || '7') || 7;
+                if (wid) {
+                    PauseInstalledAppUpdates(mgr, wid, name, source, days)
+                        .then((nextState) => {
+                            state = nextState;
+                            render();
+                        })
+                        .catch((e) => reportErr(e));
+                }
             } else if (action === 'winget-ignore') {
+                const mgr = btn.dataset.mgr || 'winget';
                 const name = btn.dataset.name || '';
                 const wid = btn.dataset.wid || '';
                 const source = btn.dataset.source || '';
                 if (wid) {
-                    IgnoreInstalledApp(wid, name, source, '')
+                    IgnoreInstalledApp(mgr, wid, name, source, '')
                         .then((nextState) => {
                             state = nextState;
                             render();
@@ -2723,9 +3908,10 @@ function bindEventListeners(): void {
                         .catch((e) => reportErr(e));
                 }
             } else if (action === 'winget-unignore') {
+                const mgr = btn.dataset.mgr || 'winget';
                 const wid = btn.dataset.wid || '';
                 if (wid) {
-                    UnignoreInstalledApp(wid)
+                    UnignoreInstalledApp(mgr, wid)
                         .then((nextState) => {
                             state = nextState;
                             render();
@@ -2748,16 +3934,25 @@ function bindEventListeners(): void {
                 const wid = btn.dataset.wid || '';
                 if (wid) {
                     openPackageDetailModal({
+                        manager: btn.dataset.mgr || 'winget',
                         appId: btn.dataset.ess || undefined,
                         wingetId: wid,
                         name: btn.dataset.name || wid,
                         source: btn.dataset.source || 'winget',
                         version: btn.dataset.ver || undefined,
                         fallbackDesc: btn.dataset.desc || undefined,
+                        iconUrl: btn.dataset.iconurl || undefined,
                         isEssentialItem: btn.dataset.isess === '1',
                     });
                 }
             }
+        });
+    });
+
+    document.querySelectorAll<HTMLImageElement>('.detail-shot-img').forEach((img) => {
+        img.addEventListener('error', () => {
+            const card = img.closest<HTMLElement>('.detail-shot-card');
+            if (card) card.style.display = 'none';
         });
     });
 
@@ -2790,8 +3985,11 @@ function bindEventListeners(): void {
     document.getElementById('btn-detail-install')?.addEventListener('click', () => {
         if (!detailTarget) return;
         const target = detailTarget;
+        const mgr = (target.manager || 'winget').toLowerCase();
         detailTarget = null;
-        if (target.isEssentialItem && target.appId) {
+        if (mgr !== 'winget') {
+            RunPackageAction(mgr, target.wingetId, target.name, target.source, 'install').catch((e) => reportErr(e));
+        } else if (target.isEssentialItem && target.appId) {
             const ver = selectedEssentialVerByApp[target.appId] || 'latest';
             RunEssentialTool(target.appId, 'install', ver).catch((e) => reportErr(e));
         } else {
@@ -2866,18 +4064,127 @@ EventsOn('state:refresh', () => {
     void refreshState();
 });
 
+EventsOn('pkgsearch:chunk', (ev: UnifiedSearchChunkEvent) => {
+    if (!ev || ev.token !== wingetSearchToken) return;
+    unifiedSearchTotal = ev.total || unifiedSearchTotal;
+    unifiedSearchPending = ev.pending || [];
+    unifiedSearchDone = Boolean(ev.done);
+    if (ev.done) {
+        wingetSearching = false;
+    }
+
+    if (ev.sourceGroup === 'winget') {
+        const list = ev.wingetRows || [];
+        wingetSearchResults = list;
+        if (list.length > 0) {
+            wingetEnriching = true;
+            const curToken = ev.token;
+            EnrichWingetSearch(list)
+                .then((detailsList) => {
+                    if (curToken !== wingetSearchToken) return;
+                    for (let i = 0; i < (detailsList || []).length; i++) {
+                        const det = detailsList[i];
+                        const orig = list[i];
+                        if (det && (det.id || orig?.id)) {
+                            const k1 = detailKey(det.id || orig.id, det.source || orig?.source);
+                            wingetDetailsByKey[k1] = det;
+                            if (orig?.id) {
+                                wingetDetailsByKey[detailKey(orig.id, orig.source)] = det;
+                            }
+                        }
+                    }
+                })
+                .catch(() => {
+                    // Search results remain usable even if metadata enrichment fails.
+                })
+                .finally(() => {
+                    if (curToken === wingetSearchToken) {
+                        wingetEnriching = false;
+                        render(true);
+                    }
+                });
+        }
+    } else if (ev.sourceGroup) {
+        extraSearchByGroup[ev.sourceGroup] = ev.pkgRows || [];
+        if (ev.sourceGroup === 'js' && (ev.jsMgrs || []).length > 0) {
+            unifiedJSMgrs = ev.jsMgrs as ManagerKey[];
+        }
+        if (ev.sourceGroup === 'py' && (ev.pyMgrs || []).length > 0) {
+            unifiedPyMgrs = ev.pyMgrs as ManagerKey[];
+        }
+    }
+    render(true);
+});
+
 window.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Escape') return;
-    if (detailTarget) {
+    if (showCloseConfirmModal) {
+        showCloseConfirmModal = false;
+        render(true);
+    } else if (detailTarget) {
         detailTarget = null;
         render(true);
     } else if (showAboutModal) {
         showAboutModal = false;
         render(true);
-    } else if (showPathModal) {
-        showPathModal = false;
+    } else if (showSettingsModal) {
+        showSettingsModal = false;
+        settingsDraft = null;
         render(true);
     }
 });
 
+EventsOn('app:confirm-close', () => {
+    closeConfirmRemember = false;
+    showCloseConfirmModal = true;
+    render(true);
+});
+
+EventsOn('nav:runtimes', () => {
+    primaryTab = 'runtimes';
+    runtimeTab = 'all';
+    showAboutModal = false;
+    showSettingsModal = false;
+    showCloseConfirmModal = false;
+    detailTarget = null;
+    void refreshState();
+});
+
+EventsOn('nav:updates', () => {
+    primaryTab = 'essentials';
+    essentialTab = 'installed';
+    installedFilter = 'updates';
+    showAboutModal = false;
+    showSettingsModal = false;
+    showCloseConfirmModal = false;
+    detailTarget = null;
+    void refreshState();
+});
+
+EventsOn('nav:search', () => {
+    primaryTab = 'essentials';
+    essentialTab = 'search';
+    showAboutModal = false;
+    showSettingsModal = false;
+    showCloseConfirmModal = false;
+    detailTarget = null;
+    void refreshState();
+});
+
+window.addEventListener('focus', () => {
+    SyncPowerState().catch(() => {
+        // Safe to ignore in headless preview without Wails runtime.
+    });
+});
+
+let windowResizeRaf = 0;
+window.addEventListener('resize', () => {
+    if (windowResizeRaf) return;
+    windowResizeRaf = window.requestAnimationFrame(() => {
+        windowResizeRaf = 0;
+        syncWindowMaximizedState();
+    });
+});
+
+syncWindowMaximizedState();
 void refreshState();

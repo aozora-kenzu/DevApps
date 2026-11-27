@@ -65,19 +65,31 @@ var (
 	toolLatestCache = make(map[string]string)
 )
 
-// ListToolStatuses inspects current installation status for all supported CLI and System tools,
+// ListToolStatuses inspects current installation status for all supported CLI, Package Manager, and System tools,
 // enriched with any cached latest upstream versions.
 func ListToolStatuses(baseDir string) []ToolStatus {
-	list := []ToolStatus{
-		detectWailsV2(),
-		detectWailsV3(),
-		detectTauriCLI(),
-		detectVSBuildTools(),
-		detectWebView2(),
+	var list []ToolStatus
+	statusCacheMu.RLock()
+	if len(cachedStatuses) > 0 && cachedStatusDir == baseDir && time.Since(cachedStatusAt) < statusCacheMaxAge {
+		list = cloneToolStatuses(cachedStatuses)
+	}
+	statusCacheMu.RUnlock()
+
+	if len(list) == 0 {
+		list = detectAllToolsConcurrently(baseDir)
+		statusCacheMu.Lock()
+		cachedStatuses = cloneToolStatuses(list)
+		cachedStatusAt = time.Now()
+		cachedStatusDir = baseDir
+		statusCacheMu.Unlock()
 	}
 
+	curPath := pathmgr.EffectiveProcessPath()
 	toolLatestMu.RLock()
 	for i := range list {
+		if list[i].Installed && list[i].BinDir != "" {
+			list[i].InPath = pathContainsDir(curPath, list[i].BinDir)
+		}
 		if latest, ok := toolLatestCache[list[i].ID]; ok {
 			list[i].LatestVersion = latest
 		}
@@ -85,12 +97,11 @@ func ListToolStatuses(baseDir string) []ToolStatus {
 	}
 	toolLatestMu.RUnlock()
 
-	_ = baseDir
 	return list
 }
 
-// RefreshLatestToolVersions fetches the latest upstream versions for all CLI and SDK tools concurrently
-// and updates the in-memory cache.
+// RefreshLatestToolVersions fetches the latest upstream versions for all CLI, Package Manager, and SDK tools concurrently
+// and updates the in-memory cache without clearing already detected local binary statuses.
 func RefreshLatestToolVersions(ctx context.Context, log Logger) map[string]string {
 	fetchers := map[string]func(context.Context) (string, error){
 		"wails2": func(c context.Context) (string, error) {
@@ -102,6 +113,9 @@ func RefreshLatestToolVersions(ctx context.Context, log Logger) map[string]strin
 		"tauri":        fetchCratesTauriLatest,
 		"vsbuildtools": fetchVSBuildToolsLatest,
 		"webview2":     fetchWebView2Latest,
+	}
+	for id, fn := range pkgMgrLatestFetchers() {
+		fetchers[id] = fn
 	}
 
 	results := make(map[string]string)
@@ -170,10 +184,14 @@ func InstallTool(ctx context.Context, toolID, mode, baseDir string, log Logger) 
 
 // InstallToolWithProgress executes the requested tool installation while forwarding download/install progress events.
 func InstallToolWithProgress(ctx context.Context, toolID, mode, baseDir string, log Logger, onProgress archive.ProgressCallback) error {
+	defer InvalidateStatusCache()
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "update", "fix":
 	default:
 		mode = "install"
+	}
+	if handled, err := installPkgMgrTool(ctx, toolID, mode, baseDir, log, onProgress); handled {
+		return err
 	}
 	switch toolID {
 	case "wails2":
@@ -265,38 +283,49 @@ func detectVSBuildTools() ToolStatus {
 	}
 	vswhere := filepath.Join(os.Getenv("ProgramFiles(x86)"), "Microsoft Visual Studio", "Installer", "vswhere.exe")
 	if fileExists(vswhere) {
-		name := runVsWhere(vswhere, "displayName")
-		if name != "" {
+		if info, ok := runVsWhereJSON(vswhere); ok {
 			st.Installed = true
-			instVer := runVsWhere(vswhere, "installationVersion")
-			dispVer := runVsWhere(vswhere, "catalog_productDisplayVersion")
-			st.Location = runVsWhere(vswhere, "installationPath")
-			st.RawVersion = normalizeToolVer(instVer)
-			if dispVer != "" && instVer != "" {
-				st.Version = fmt.Sprintf("%s (%s)", dispVer, instVer)
-			} else if instVer != "" {
-				st.Version = instVer
-			} else {
-				st.Version = name
+			st.Location = info.InstallationPath
+			st.RawVersion = normalizeToolVer(info.InstallationVersion)
+			switch {
+			case info.Catalog.ProductDisplayVersion != "" && info.InstallationVersion != "":
+				st.Version = fmt.Sprintf("%s (%s)", info.Catalog.ProductDisplayVersion, info.InstallationVersion)
+			case info.InstallationVersion != "":
+				st.Version = info.InstallationVersion
+			default:
+				st.Version = info.DisplayName
 			}
 		}
 	}
 	return st
 }
 
-func runVsWhere(vswherePath, prop string) string {
-	cmd := exec.Command(vswherePath, "-all", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", prop)
+type vswhereInstance struct {
+	DisplayName         string `json:"displayName"`
+	InstallationPath    string `json:"installationPath"`
+	InstallationVersion string `json:"installationVersion"`
+	Catalog             struct {
+		ProductDisplayVersion string `json:"productDisplayVersion"`
+	} `json:"catalog"`
+}
+
+func runVsWhereJSON(vswherePath string) (vswhereInstance, bool) {
+	cmd := exec.Command(vswherePath, "-all", "-products", "*", "-requires", "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-format", "json", "-utf8")
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	out, err := cmd.Output()
 	if err != nil {
-		return ""
+		return vswhereInstance{}, false
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if t := strings.TrimSpace(line); t != "" {
-			return t
+	var items []vswhereInstance
+	if err := json.Unmarshal(out, &items); err != nil {
+		return vswhereInstance{}, false
+	}
+	for _, it := range items {
+		if strings.TrimSpace(it.DisplayName) != "" || strings.TrimSpace(it.InstallationPath) != "" {
+			return it, true
 		}
 	}
-	return ""
+	return vswhereInstance{}, false
 }
 
 func detectWebView2() ToolStatus {
@@ -850,6 +879,11 @@ func findInstalledAppBinDirs(baseDir string) []string {
 		{"go", "bin", "go.exe"},
 		{"rust", "bin", "cargo.exe"},
 		{"gcc", "bin", "gcc.exe"},
+		{"node", "", "node.exe"},
+		{"git", "cmd", "git.exe"},
+		{"python", "", "python.exe"},
+		{"python", "Scripts", "pip.exe"},
+		{"dotnet", "", "dotnet.exe"},
 	} {
 		matches, _ := filepath.Glob(filepath.Join(baseDir, spec.app, "*", spec.sub, spec.bin))
 		for _, m := range matches {

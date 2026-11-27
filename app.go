@@ -7,24 +7,30 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/aozora-kenzu/UniDevUI/internal/archive"
+	"github.com/aozora-kenzu/UniDevUI/internal/autostart"
 	"github.com/aozora-kenzu/UniDevUI/internal/config"
 	"github.com/aozora-kenzu/UniDevUI/internal/essentials"
 	"github.com/aozora-kenzu/UniDevUI/internal/lts"
 	"github.com/aozora-kenzu/UniDevUI/internal/pathmgr"
+	"github.com/aozora-kenzu/UniDevUI/internal/pkgmgr"
 	"github.com/aozora-kenzu/UniDevUI/internal/selfupdate"
+	"github.com/aozora-kenzu/UniDevUI/internal/syspower"
 	"github.com/aozora-kenzu/UniDevUI/internal/tools"
+	"github.com/aozora-kenzu/UniDevUI/internal/tray"
 )
 
 // AppVersion is the current UniDevUI desktop application version (overridable via -ldflags for testing).
-var AppVersion = "1.0.2"
+var AppVersion = "1.1.2"
 
 // VersionView describes one package version plus local install and PATH status.
 type VersionView struct {
@@ -61,46 +67,59 @@ type PackageView struct {
 
 // EssentialView describes one Windows Apps entry plus detected Winget state.
 type EssentialView struct {
-	ID            string   `json:"id"`
-	Name          string   `json:"name"`
-	Category      string   `json:"category"`
-	WingetID      string   `json:"wingetId"`
-	Source        string   `json:"source"`
-	RequiresUAC   bool     `json:"requiresUac"`
-	Versions      []string `json:"versions,omitempty"`
-	Description   string   `json:"description"`
-	Installed     bool     `json:"installed"`
-	InstalledVer  string   `json:"installedVer"`
-	AvailableVer  string   `json:"availableVer"`
-	HasUpdate     bool     `json:"hasUpdate"`
-	UpdateIgnored bool     `json:"updateIgnored"`
-	VersionStatus string   `json:"versionStatus"` // "uptodate" | "outdated" | "ahead" | "detected" | "ignored" | ""
-	MatchedBy     string   `json:"matchedBy,omitempty"`
-	DownloadSize  int64    `json:"downloadSize"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Category       string   `json:"category"`
+	WingetID       string   `json:"wingetId"`
+	Source         string   `json:"source"`
+	RequiresUAC    bool     `json:"requiresUac"`
+	Versions       []string `json:"versions,omitempty"`
+	Description    string   `json:"description"`
+	IconURL        string   `json:"iconUrl,omitempty"`
+	Installed      bool     `json:"installed"`
+	InstalledVer   string   `json:"installedVer"`
+	AvailableVer   string   `json:"availableVer"`
+	HasUpdate      bool     `json:"hasUpdate"`
+	UpdateIgnored  bool     `json:"updateIgnored"`
+	SkippedVersion string   `json:"skippedVersion,omitempty"`
+	PauseUntil     string   `json:"pauseUntil,omitempty"`
+	VersionStatus  string   `json:"versionStatus"` // "uptodate" | "outdated" | "ahead" | "detected" | "ignored" | ""
+	MatchedBy      string   `json:"matchedBy,omitempty"`
+	DownloadSize   int64    `json:"downloadSize"`
 }
 
-// InstalledAppView describes one installed Windows application discovered via Winget.
+// InstalledAppView describes one installed Windows application or CLI package across Winget and Package Managers.
 type InstalledAppView struct {
+	Manager         string `json:"manager"` // "winget" | "scoop" | "choco" | "npm" | "pnpm" | "bun" | "uv"
 	ID              string `json:"id"`
 	Name            string `json:"name"`
 	InstalledVer    string `json:"installedVer"`
 	AvailableVer    string `json:"availableVer"`
 	Source          string `json:"source"`
+	Description     string `json:"description,omitempty"`
+	Homepage        string `json:"homepage,omitempty"`
+	IconURL         string `json:"iconUrl,omitempty"`
 	HasUpdate       bool   `json:"hasUpdate"`
 	Ignored         bool   `json:"ignored"`
+	SkippedVersion  string `json:"skippedVersion,omitempty"`
+	PauseUntil      string `json:"pauseUntil,omitempty"`
 	WingetPinned    bool   `json:"wingetPinned"`
 	IgnoreReason    string `json:"ignoreReason,omitempty"`
 	ManagedByWinget bool   `json:"managedByWinget"`
+	CanUpdate       bool   `json:"canUpdate"`
+	CanUninstall    bool   `json:"canUninstall"`
 	PinnedCurated   bool   `json:"pinnedCurated"`
 	CuratedAppID    string `json:"curatedAppId,omitempty"`
 	DownloadSize    int64  `json:"downloadSize"`
 }
 
-// WingetUpdateTarget identifies one Winget package to update via Update All.
+// WingetUpdateTarget identifies one installed package (Winget or Package Manager) to update via Update All.
 type WingetUpdateTarget struct {
-	Name     string `json:"name"`
-	WingetID string `json:"wingetId"`
-	Source   string `json:"source"`
+	Manager      string `json:"manager"`
+	Name         string `json:"name"`
+	WingetID     string `json:"wingetId"`
+	Source       string `json:"source"`
+	AvailableVer string `json:"availableVer,omitempty"`
 }
 
 // BatchEssentialItem identifies one essential app and optional version to install in a batch queue.
@@ -111,15 +130,16 @@ type BatchEssentialItem struct {
 
 // DashboardState is the complete snapshot rendered by the frontend.
 type DashboardState struct {
-	AppDir             string               `json:"appDir"`
-	BaseDir            string               `json:"baseDir"`
-	ConfPath           string               `json:"confPath"`
-	EssentialsConfPath string               `json:"essentialsConfPath"`
-	IgnoredConfPath    string               `json:"ignoredConfPath"`
-	Packages           []PackageView        `json:"packages"`
-	Tools              []tools.ToolStatus   `json:"tools"`
-	Essentials         []EssentialView      `json:"essentials"`
-	InstalledApps      []InstalledAppView   `json:"installedApps"`
+	AppDir             string                  `json:"appDir"`
+	BaseDir            string                  `json:"baseDir"`
+	ConfPath           string                  `json:"confPath"`
+	EssentialsConfPath string                  `json:"essentialsConfPath"`
+	IgnoredConfPath    string                  `json:"ignoredConfPath"`
+	Packages           []PackageView           `json:"packages"`
+	Tools              []tools.ToolStatus      `json:"tools"`
+	PkgManagers        []pkgmgr.ManagerEnv     `json:"pkgManagers"`
+	Essentials         []EssentialView         `json:"essentials"`
+	InstalledApps      []InstalledAppView      `json:"installedApps"`
 	WingetEnv          essentials.EnvStatus    `json:"wingetEnv"`
 	UserPathList       []string                `json:"userPathList"`
 	UserPathEntries    []pathmgr.UserPathEntry `json:"userPathEntries"`
@@ -127,6 +147,7 @@ type DashboardState struct {
 	Busy               bool                    `json:"busy"`
 	LastLTSCheck       string                  `json:"lastLtsCheck"`
 	Language           string                  `json:"language"`
+	Settings           config.AppSettings      `json:"settings"`
 	AppVersion         string                  `json:"appVersion"`
 	AppUpdate          selfupdate.UpdateInfo   `json:"appUpdate"`
 }
@@ -139,17 +160,57 @@ type TerminalLogEvent struct {
 	MessageID string `json:"messageId,omitempty"`
 }
 
+// UnifiedSearchStart summarizes which active package sources were launched for a single query.
+type UnifiedSearchStart struct {
+	Token   int      `json:"token"`
+	Query   string   `json:"query"`
+	Total   int      `json:"total"`
+	Sources []string `json:"sources"`
+	JSMgrs  []string `json:"jsMgrs,omitempty"`
+	PyMgrs  []string `json:"pyMgrs,omitempty"`
+}
+
+// UnifiedSearchChunk streams one completed source's search results back to the frontend immediately.
+type UnifiedSearchChunk struct {
+	Token       int                         `json:"token"`
+	Query       string                      `json:"query"`
+	SourceGroup string                      `json:"sourceGroup"` // "winget" | "scoop" | "choco" | "js" | "py" | "cargo" | "dotnet" | "psgallery"
+	JSMgrs      []string                    `json:"jsMgrs,omitempty"`
+	PyMgrs      []string                    `json:"pyMgrs,omitempty"`
+	WingetRows  []essentials.WingetTableRow `json:"wingetRows,omitempty"`
+	PkgRows     []pkgmgr.PackageEntry       `json:"pkgRows,omitempty"`
+	Error       string                      `json:"error,omitempty"`
+	Completed   int                         `json:"completed"`
+	Total       int                         `json:"total"`
+	Pending     []string                    `json:"pending"`
+	Done        bool                        `json:"done"`
+}
+
 // App is the main Wails application service.
 type App struct {
-	ctx      context.Context
-	appDir   string
-	dirMu    sync.RWMutex
-	baseDir  string
-	language string
+	ctx           context.Context
+	appDir        string
+	dirMu         sync.RWMutex
+	baseDir       string
+	language      string
+	settings      config.AppSettings
+	startedHidden bool
+	trayIconICO   []byte
+	trayIconPNG   []byte
+	trayMgr       *tray.Manager
+	allowQuit     atomic.Bool
+	windowVisible atomic.Bool
+	hasTaskError  atomic.Bool
+	scanBusy      atomic.Bool
+	updateCount   atomic.Int32
 
 	taskMu     sync.Mutex
 	busy       bool
 	cancelTask context.CancelFunc
+
+	searchMu     sync.Mutex
+	searchCancel context.CancelFunc
+	searchSeq    int
 
 	logMu        sync.Mutex
 	logHistory   []TerminalLogEvent
@@ -160,6 +221,8 @@ type App struct {
 	wingetByID       map[string]essentials.WingetTableRow
 	wingetByName     map[string]essentials.WingetTableRow
 	wingetRows       []essentials.WingetTableRow
+	pkgMgrEnvs       []pkgmgr.ManagerEnv
+	pkgMgrRows       []pkgmgr.PackageEntry
 	regApps          []essentials.RegistryAppEntry
 	fallbackRepoVers map[string]string
 	wingetCacheDone  bool
@@ -170,9 +233,18 @@ type App struct {
 	watchIgnoreEssMod time.Time
 	watchIgnoreIgnMod time.Time
 
+	refreshMu    sync.Mutex
+	refreshTimer *time.Timer
+
+	monitorMu       sync.Mutex
+	monitorCancel   context.CancelFunc
+	lastMonitorRun  time.Time
+	notifiedUpdates map[string]string
+
 	sizeMu        sync.RWMutex
 	urlSizes      map[string]int64
 	sizeCachePath string
+	iconCachePath string
 
 	appUpdateMu   sync.RWMutex
 	appUpdateInfo selfupdate.UpdateInfo
@@ -181,43 +253,64 @@ type App struct {
 
 // NewApp creates a new App instance. Config files live in AppDir (beside UniDevUI.exe);
 // extraction output defaults to C:\AppPath or persisted settings.
-func NewApp() *App {
+func NewApp(startedHidden bool, trayIconICO, trayIconPNG []byte) *App {
 	settings, _, _ := config.LoadSettings()
-	base := settings.BaseDir
-	if strings.TrimSpace(base) == "" {
-		base = config.DefaultBaseDir
+	if regEn, regTray, rErr := autostart.IsEnabled(); rErr == nil {
+		settings.AutoStart = regEn
+		if regEn {
+			settings.StartInTray = regTray
+		}
 	}
-	lang := settings.Language
-	if lang != "id" {
-		lang = "en"
-	}
+	settings = config.NormalizeSettings(settings)
+
 	sizeCachePath := ""
+	iconCachePath := ""
 	appUpdatePath := ""
 	if sp, spErr := config.SettingsPath(); spErr == nil && sp != "" {
 		cfgDir := filepath.Dir(sp)
 		sizeCachePath = filepath.Join(cfgDir, "size_cache.json")
+		iconCachePath = filepath.Join(cfgDir, "icon_database_v2.json")
 		appUpdatePath = filepath.Join(cfgDir, "app_update_cache.json")
 	}
+	if iconCachePath != "" {
+		_ = pkgmgr.DefaultIconStore().LoadFromFile(iconCachePath)
+	}
 	cachedUpdate, _ := selfupdate.LoadCachedInfo(appUpdatePath, AppVersion, selfupdate.DefaultCheckCooldown)
-	return &App{
+	lastLTS := ""
+	if settings.LastCheckUnix > 0 {
+		lastLTS = time.Unix(settings.LastCheckUnix, 0).Format("15:04:05")
+	}
+	a := &App{
 		appDir:           config.AppDir(),
-		baseDir:          base,
-		language:         lang,
+		baseDir:          settings.BaseDir,
+		language:         settings.Language,
+		settings:         settings,
+		startedHidden:    startedHidden,
+		trayIconICO:      trayIconICO,
+		trayIconPNG:      trayIconPNG,
+		lastLTSCheck:     lastLTS,
 		wingetEnv:        essentials.CheckEnvironment(),
 		wingetByID:       make(map[string]essentials.WingetTableRow),
 		wingetByName:     make(map[string]essentials.WingetTableRow),
 		regApps:          essentials.QueryRegistryUninstallApps(),
 		fallbackRepoVers: make(map[string]string),
+		notifiedUpdates:  make(map[string]string),
 		urlSizes:         lts.LoadSizeCache(sizeCachePath),
 		sizeCachePath:    sizeCachePath,
+		iconCachePath:    iconCachePath,
 		appUpdateInfo:    cachedUpdate,
 		appUpdatePath:    appUpdatePath,
 	}
+	a.windowVisible.Store(!startedHidden)
+	return a
 }
 
 func (a *App) getBaseDir() string {
 	a.dirMu.RLock()
 	defer a.dirMu.RUnlock()
+	if strings.TrimSpace(a.baseDir) == "" {
+		return config.DefaultBaseDir
+	}
 	return a.baseDir
 }
 
@@ -228,6 +321,38 @@ func (a *App) getLanguage() string {
 		return "id"
 	}
 	return "en"
+}
+
+func (a *App) getSettings() config.AppSettings {
+	a.dirMu.RLock()
+	s := a.settings
+	if strings.TrimSpace(a.baseDir) != "" {
+		s.BaseDir = a.baseDir
+	}
+	if strings.TrimSpace(a.language) != "" {
+		s.Language = a.language
+	}
+	a.dirMu.RUnlock()
+	if s.BaseDir == "" && s.CloseAction == "" && s.AutoCheckIntervalHours == 0 {
+		return config.DefaultSettings()
+	}
+	return config.NormalizeSettings(s)
+}
+
+func (a *App) requestStateRefresh() {
+	if a.ctx == nil {
+		return
+	}
+	a.refreshMu.Lock()
+	if a.refreshTimer != nil {
+		a.refreshTimer.Stop()
+	}
+	a.refreshTimer = time.AfterFunc(250*time.Millisecond, func() {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "state:refresh")
+		}
+	})
+	a.refreshMu.Unlock()
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -253,52 +378,74 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.startConfigWatcher(pkgConf, essConf, ignConf)
 
-	// Refresh CLI/SDK latest versions & Winget installed map in background without delaying startup.
-	go func() {
-		bgCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		if res := tools.RefreshLatestToolVersions(bgCtx, nil); len(res) > 0 {
-			a.logMu.Lock()
-			if a.lastLTSCheck == "" {
-				a.lastLTSCheck = time.Now().Format("15:04:05")
+	curSettings := a.getSettings()
+	a.trayMgr = tray.New(a.trayIconICO, a.trayIconPNG, curSettings.Language, curSettings.AutoStart, "UniDevUI", tray.Callbacks{
+		OnShow: func() { a.ShowWindow() },
+		OnNavRuntimes: func() {
+			a.ShowWindow()
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "nav:runtimes")
 			}
-			a.logMu.Unlock()
-			runtime.EventsEmit(a.ctx, "state:refresh")
-		}
-	}()
+		},
+		OnNavUpdates: func() {
+			a.ShowWindow()
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "nav:updates")
+			}
+		},
+		OnNavSearch: func() {
+			a.ShowWindow()
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "nav:search")
+			}
+		},
+		OnCheckUpdates:    func() { go a.CheckUpdatesFromTray() },
+		OnToggleAutoStart: func() { a.toggleAutoStartFromTray() },
+		OnNotifyClick: func() {
+			a.ShowWindow()
+			if a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "nav:updates")
+			}
+		},
+		OnOSShutdown: func() { a.QuitApp() },
+		OnExit:       func() { a.QuitApp() },
+	})
+	a.trayMgr.Start()
+	a.syncTrayAndPowerState()
 
-	go func() {
-		bgCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		defer cancel()
-		a.refreshWingetCache(bgCtx)
-		runtime.EventsEmit(a.ctx, "state:refresh")
-	}()
+	if a.startedHidden {
+		a.emitBiLog("INFO",
+			"UniDevUI started minimized in System Tray; deferred update scan scheduled.",
+			"UniDevUI dijalankan tersembunyi di System Tray; scan pembaruan dijadwalkan setelah sistem stabil.",
+		)
+	}
 
-	go func() {
-		bgCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		defer cancel()
-		if a.refreshPackageSizes(bgCtx) {
-			runtime.EventsEmit(a.ctx, "state:refresh")
-		}
-		if a.refreshEssentialSizes(bgCtx) {
-			runtime.EventsEmit(a.ctx, "state:refresh")
-		}
-	}()
+	monCtx, monCancel := context.WithCancel(ctx)
+	a.monitorMu.Lock()
+	a.monitorCancel = monCancel
+	a.monitorMu.Unlock()
 
-	go func() {
-		info := a.refreshAppUpdate(ctx, false)
-		if info.HasUpdate {
-			a.emitBiLog("INFO",
-				fmt.Sprintf("UniDevUI update available: v%s -> v%s (open About to update)", info.CurrentVersion, info.LatestVersion),
-				fmt.Sprintf("Update UniDevUI tersedia: v%s -> v%s (buka Tentang untuk memperbarui)", info.CurrentVersion, info.LatestVersion),
-			)
-		}
-		runtime.EventsEmit(a.ctx, "state:refresh")
-	}()
+	go a.runStartupSequence(monCtx)
+	go a.runUpdateMonitorLoop(monCtx)
 }
 
 func (a *App) shutdown(ctx context.Context) {
 	a.stopConfigWatcher()
+	a.monitorMu.Lock()
+	if a.monitorCancel != nil {
+		a.monitorCancel()
+		a.monitorCancel = nil
+	}
+	a.monitorMu.Unlock()
+	a.refreshMu.Lock()
+	if a.refreshTimer != nil {
+		a.refreshTimer.Stop()
+		a.refreshTimer = nil
+	}
+	a.refreshMu.Unlock()
+	if a.trayMgr != nil {
+		a.trayMgr.Stop()
+	}
 	a.CancelActiveTask()
 }
 
@@ -455,6 +602,7 @@ func (a *App) startConfigWatcher(pkgConfPath, essConfPath, ignConfPath string) {
 
 // ReloadConfig reloads packages.conf, essentials.conf, and refreshes Winget status, logging a completion summary.
 func (a *App) ReloadConfig() (DashboardState, error) {
+	tools.InvalidateStatusCache()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	a.refreshWingetCache(ctx)
@@ -606,6 +754,8 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 	wEnv := a.wingetEnv
 	byID := a.wingetByID
 	wingetRows := a.wingetRows
+	pkgMgrEnvs := append([]pkgmgr.ManagerEnv(nil), a.pkgMgrEnvs...)
+	pkgMgrRows := append([]pkgmgr.PackageEntry(nil), a.pkgMgrRows...)
 	regApps := a.regApps
 	repoVers := a.fallbackRepoVers
 	curatedByWingetID := make(map[string]string, len(essList))
@@ -618,7 +768,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 	essViews := make([]EssentialView, 0, len(essList))
 	for _, item := range essList {
 		wKey := strings.ToLower(strings.TrimSpace(item.WingetID))
-		_, isIgnored := ignoredMap[wKey]
+		ignEntry, hasIgn := ignoredMap[wKey]
 		ev := EssentialView{
 			ID:           item.ID,
 			Name:         item.Name,
@@ -628,6 +778,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 			RequiresUAC:  item.RequiresUAC,
 			Versions:     item.Versions,
 			Description:  item.Description,
+			IconURL:      pkgmgr.LookupIconMedia(pkgmgr.ManagerWinget, item.WingetID, item.Name).Icon,
 			DownloadSize: a.getCachedURLSize("__ess:" + wKey),
 		}
 		match := essentials.MatchInstalledEssential(item, byID, regApps, wingetRows)
@@ -650,10 +801,21 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 				}
 			}
 
-			if isIgnored {
+			pauseActive := essentials.IsPausedActive(ignEntry, time.Now())
+			if pauseActive {
+				ev.PauseUntil = ignEntry.PauseUntil
+			}
+			fullIgnored, verSkipped := essentials.EvaluateIgnoredPolicy(ignEntry, hasIgn, ev.AvailableVer)
+			if fullIgnored {
 				ev.UpdateIgnored = true
 				ev.HasUpdate = false
 				ev.VersionStatus = "ignored"
+			} else if verSkipped {
+				if strings.TrimSpace(ignEntry.SkippedVersion) != "" {
+					ev.SkippedVersion = ignEntry.SkippedVersion
+				}
+				ev.HasUpdate = false
+				ev.VersionStatus = "uptodate"
 			} else {
 				switch {
 				case ev.HasUpdate:
@@ -666,13 +828,13 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 					ev.VersionStatus = "uptodate"
 				}
 			}
-		} else if isIgnored {
+		} else if fullIgn, _ := essentials.EvaluateIgnoredPolicy(ignEntry, hasIgn, ""); fullIgn {
 			ev.UpdateIgnored = true
 			ev.VersionStatus = "ignored"
 		}
 		essViews = append(essViews, ev)
 	}
-	installedApps := a.buildInstalledAppViews(wingetRows, ignoredList, ignoredMap, curatedByWingetID)
+	installedApps := a.buildInstalledAppViews(wingetRows, pkgMgrRows, ignoredList, ignoredMap, curatedByWingetID)
 	a.essMu.RUnlock()
 
 	a.taskMu.Lock()
@@ -693,6 +855,19 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 			toolsList[i].DownloadSize = a.getCachedURLSize("__tool:webview2")
 		}
 	}
+	if len(pkgMgrEnvs) == 0 {
+		for _, tl := range toolsList {
+			if tl.Category == "pkgmgr" {
+				pkgMgrEnvs = append(pkgMgrEnvs, pkgmgr.ManagerEnv{
+					ID:        tl.ID,
+					Name:      tl.Name,
+					Available: tl.Installed,
+					Version:   strings.TrimPrefix(tl.Version, "v"),
+					ExePath:   tl.Location,
+				})
+			}
+		}
+	}
 
 	a.appUpdateMu.RLock()
 	appUpdateCopy := a.appUpdateInfo
@@ -701,7 +876,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		appUpdateCopy.CurrentVersion = selfupdate.NormalizeVersion(AppVersion)
 	}
 
-	return DashboardState{
+	state := DashboardState{
 		AppDir:             a.appDir,
 		BaseDir:            baseDir,
 		ConfPath:           pkgConfPath,
@@ -709,6 +884,7 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		IgnoredConfPath:    ignConfPath,
 		Packages:           views,
 		Tools:              toolsList,
+		PkgManagers:        pkgMgrEnvs,
 		Essentials:         essViews,
 		InstalledApps:      installedApps,
 		WingetEnv:          wEnv,
@@ -718,67 +894,170 @@ func (a *App) GetDashboardState() (DashboardState, error) {
 		Busy:               busy,
 		LastLTSCheck:       lastCheck,
 		Language:           a.getLanguage(),
+		Settings:           a.getSettings(),
 		AppVersion:         AppVersion,
 		AppUpdate:          appUpdateCopy,
-	}, nil
+	}
+	updItems := extractUpdateNoticeItems(state)
+	a.updateCount.Store(int32(len(updItems)))
+	if a.trayMgr != nil {
+		a.syncTrayAndPowerState()
+	}
+	return state, nil
 }
 
 func (a *App) buildInstalledAppViews(
 	rows []essentials.WingetTableRow,
+	pkgRows []pkgmgr.PackageEntry,
 	ignoredList []essentials.IgnoredApp,
 	ignoredMap map[string]essentials.IgnoredApp,
 	curatedByWingetID map[string]string,
 ) []InstalledAppView {
-	out := make([]InstalledAppView, 0, len(rows)+len(ignoredList))
-	seen := make(map[string]bool, len(rows))
+	out := make([]InstalledAppView, 0, len(rows)+len(pkgRows)+len(ignoredList))
+	seen := make(map[string]bool, len(rows)+len(pkgRows)+len(ignoredList))
+
+	lookupIgnored := func(mgr, id string) (essentials.IgnoredApp, bool) {
+		k1 := strings.ToLower(pkgmgr.IgnoreKey(mgr, id))
+		if ig, ok := ignoredMap[k1]; ok {
+			return ig, true
+		}
+		if pkgmgr.NormalizeManager(mgr) == pkgmgr.ManagerWinget {
+			if ig, ok := ignoredMap[strings.ToLower(strings.TrimSpace(id))]; ok {
+				return ig, true
+			}
+		}
+		return essentials.IgnoredApp{}, false
+	}
 
 	for _, r := range rows {
 		id := strings.TrimSpace(r.ID)
 		if id == "" {
 			continue
 		}
-		key := strings.ToLower(id)
-		if seen[key] {
+		dedupKey := "winget:" + strings.ToLower(id)
+		if seen[dedupKey] {
 			continue
 		}
-		seen[key] = true
+		seen[dedupKey] = true
 
-		ignEntry, isIgnored := ignoredMap[key]
 		avail := strings.TrimSpace(r.Available)
-		curatedID := curatedByWingetID[key]
+		ignEntry, hasIgn := lookupIgnored(pkgmgr.ManagerWinget, id)
+		pauseActive := essentials.IsPausedActive(ignEntry, time.Now())
+		fullIgn, verSkipped := essentials.EvaluateIgnoredPolicy(ignEntry, hasIgn, avail)
+		skipVer := ""
+		pauseUntil := ""
+		if pauseActive {
+			pauseUntil = ignEntry.PauseUntil
+		}
+		if verSkipped && strings.TrimSpace(ignEntry.SkippedVersion) != "" {
+			skipVer = ignEntry.SkippedVersion
+		}
+		curatedID := curatedByWingetID[strings.ToLower(id)]
+		manageable := essentials.IsManageableWingetID(id)
 		out = append(out, InstalledAppView{
+			Manager:         pkgmgr.ManagerWinget,
 			ID:              id,
 			Name:            r.Name,
 			InstalledVer:    strings.TrimSpace(r.Version),
 			AvailableVer:    avail,
 			Source:          strings.TrimSpace(r.Source),
-			HasUpdate:       avail != "" && !isIgnored,
-			Ignored:         isIgnored,
-			WingetPinned:    isIgnored && ignEntry.WingetPinned,
+			IconURL:         pkgmgr.LookupIconMedia(pkgmgr.ManagerWinget, id, r.Name).Icon,
+			HasUpdate:       avail != "" && !fullIgn && !verSkipped,
+			Ignored:         fullIgn,
+			SkippedVersion:  skipVer,
+			PauseUntil:      pauseUntil,
+			WingetPinned:    fullIgn && ignEntry.WingetPinned,
 			IgnoreReason:    ignEntry.Reason,
-			ManagedByWinget: essentials.IsManageableWingetID(id),
+			ManagedByWinget: manageable,
+			CanUpdate:       manageable,
+			CanUninstall:    manageable,
 			PinnedCurated:   curatedID != "",
 			CuratedAppID:    curatedID,
-			DownloadSize:    a.getCachedURLSize("__ess:" + key),
+			DownloadSize:    a.getCachedURLSize("__ess:" + strings.ToLower(id)),
 		})
 	}
 
-	// Ensure any entry saved in ignored_updates.conf appears under Ignored even if filtered out from wingetRows.
-	for _, ig := range ignoredList {
-		key := strings.ToLower(strings.TrimSpace(ig.ID))
-		if key == "" || seen[key] {
+	for _, p := range pkgRows {
+		mgr := pkgmgr.NormalizeManager(p.Manager)
+		id := strings.TrimSpace(p.ID)
+		if mgr == "" || id == "" {
 			continue
 		}
-		seen[key] = true
-		curatedID := curatedByWingetID[key]
+		dedupKey := mgr + ":" + strings.ToLower(id)
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+
+		avail := strings.TrimSpace(p.AvailableVer)
+		ignEntry, hasIgn := lookupIgnored(mgr, id)
+		pauseActive := essentials.IsPausedActive(ignEntry, time.Now())
+		fullIgn, verSkipped := essentials.EvaluateIgnoredPolicy(ignEntry, hasIgn, avail)
+		skipVer := ""
+		pauseUntil := ""
+		if pauseActive {
+			pauseUntil = ignEntry.PauseUntil
+		}
+		if verSkipped && strings.TrimSpace(ignEntry.SkippedVersion) != "" {
+			skipVer = ignEntry.SkippedVersion
+		}
+		iconURL := strings.TrimSpace(p.IconURL)
+		if iconURL == "" {
+			iconURL = pkgmgr.LookupIconMedia(mgr, id, p.Name).Icon
+		}
 		out = append(out, InstalledAppView{
-			ID:              ig.ID,
+			Manager:        mgr,
+			ID:             id,
+			Name:           pkgmgr.FormatDisplayName(id, p.Name),
+			InstalledVer:   strings.TrimSpace(p.Version),
+			AvailableVer:   avail,
+			Source:         strings.TrimSpace(p.Source),
+			Description:    strings.TrimSpace(p.Description),
+			Homepage:       strings.TrimSpace(p.Homepage),
+			IconURL:        iconURL,
+			HasUpdate:      p.HasUpdate && avail != "" && !fullIgn && !verSkipped,
+			Ignored:        fullIgn,
+			SkippedVersion: skipVer,
+			PauseUntil:     pauseUntil,
+			IgnoreReason:   ignEntry.Reason,
+			CanUpdate:      true,
+			CanUninstall:   !pkgmgr.IsCoreProtectedPackage(mgr, id),
+		})
+	}
+
+	// Ensure any full-ignored entry saved in ignored_updates.conf appears under Ignored even if absent from active scans.
+	for _, ig := range ignoredList {
+		if strings.TrimSpace(ig.SkippedVersion) != "" || strings.TrimSpace(ig.PauseUntil) != "" {
+			continue
+		}
+		mgr, rawID := pkgmgr.SplitIgnoreKey(ig.ID, ig.Source)
+		key := strings.ToLower(strings.TrimSpace(rawID))
+		if key == "" {
+			continue
+		}
+		dedupKey := mgr + ":" + key
+		if seen[dedupKey] {
+			continue
+		}
+		seen[dedupKey] = true
+
+		manageable := mgr == pkgmgr.ManagerWinget && essentials.IsManageableWingetID(rawID)
+		curatedID := ""
+		if mgr == pkgmgr.ManagerWinget {
+			curatedID = curatedByWingetID[key]
+		}
+		out = append(out, InstalledAppView{
+			Manager:         mgr,
+			ID:              rawID,
 			Name:            ig.Name,
 			Source:          ig.Source,
+			IconURL:         pkgmgr.LookupIconMedia(mgr, rawID, ig.Name).Icon,
 			Ignored:         true,
 			WingetPinned:    ig.WingetPinned,
 			IgnoreReason:    ig.Reason,
-			ManagedByWinget: essentials.IsManageableWingetID(ig.ID),
+			ManagedByWinget: manageable,
+			CanUpdate:       manageable || mgr != pkgmgr.ManagerWinget,
+			CanUninstall:    manageable || (mgr != pkgmgr.ManagerWinget && !pkgmgr.IsCoreProtectedPackage(mgr, rawID)),
 			PinnedCurated:   curatedID != "",
 			CuratedAppID:    curatedID,
 			DownloadSize:    a.getCachedURLSize("__ess:" + key),
@@ -793,8 +1072,10 @@ func (a *App) buildInstalledAppViews(
 		if aItem.HasUpdate != bItem.HasUpdate {
 			return aItem.HasUpdate
 		}
-		if aItem.ManagedByWinget != bItem.ManagedByWinget {
-			return aItem.ManagedByWinget
+		aManage := aItem.ManagedByWinget || aItem.Manager != pkgmgr.ManagerWinget
+		bManage := bItem.ManagedByWinget || bItem.Manager != pkgmgr.ManagerWinget
+		if aManage != bManage {
+			return aManage
 		}
 		ni := strings.ToLower(aItem.Name)
 		nj := strings.ToLower(bItem.Name)
@@ -807,18 +1088,33 @@ func (a *App) buildInstalledAppViews(
 }
 
 func (a *App) refreshWingetCache(ctx context.Context) {
+	baseDir := a.getBaseDir()
 	env := essentials.CheckEnvironment()
 	regApps := essentials.QueryRegistryUninstallApps()
 	var byID, byName map[string]essentials.WingetTableRow
 	var rows []essentials.WingetTableRow
+	var pkgMgrEnvs []pkgmgr.ManagerEnv
+	var pkgMgrRows []pkgmgr.PackageEntry
+
+	var scanWG sync.WaitGroup
 	if env.WingetAvailable {
-		idMap, nameMap, rawRows, err := essentials.QueryInstalledEntries(ctx)
-		if err == nil {
-			byID = idMap
-			byName = nameMap
-			rows = rawRows
-		}
+		scanWG.Add(1)
+		go func() {
+			defer scanWG.Done()
+			idMap, nameMap, rawRows, err := essentials.QueryInstalledEntries(ctx)
+			if err == nil {
+				byID = idMap
+				byName = nameMap
+				rows = rawRows
+			}
+		}()
 	}
+	scanWG.Add(1)
+	go func() {
+		defer scanWG.Done()
+		pkgMgrEnvs, pkgMgrRows = pkgmgr.QueryAllInstalled(ctx, baseDir)
+	}()
+	scanWG.Wait()
 
 	// For apps detected via Windows Registry / display name (where Winget ARP ID differs or was ahead of repo),
 	// fetch live latest repo versions via `winget show` so UniDevUI shows accurate Up-to-date / Ahead / Update comparison.
@@ -836,7 +1132,7 @@ func (a *App) refreshWingetCache(ctx context.Context) {
 				if len(fallbackItems) > 0 {
 					var mu sync.Mutex
 					var wg sync.WaitGroup
-					sem := make(chan struct{}, 6)
+					sem := make(chan struct{}, 2)
 					for _, item := range fallbackItems {
 						it := item
 						wg.Add(1)
@@ -872,6 +1168,8 @@ func (a *App) refreshWingetCache(ctx context.Context) {
 		a.wingetByName = byName
 		a.wingetRows = rows
 	}
+	a.pkgMgrEnvs = pkgMgrEnvs
+	a.pkgMgrRows = pkgMgrRows
 	for k, v := range repoVers {
 		a.fallbackRepoVers[k] = v
 	}
@@ -879,8 +1177,9 @@ func (a *App) refreshWingetCache(ctx context.Context) {
 	a.essMu.Unlock()
 }
 
-// RefreshWingetStatus manually refreshes Winget availability, UAC state, and installed app map.
+// RefreshWingetStatus manually refreshes Winget + Package Manager availability, UAC state, and installed app map.
 func (a *App) RefreshWingetStatus() (DashboardState, error) {
+	tools.InvalidateStatusCache()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	a.refreshWingetCache(ctx)
@@ -889,8 +1188,8 @@ func (a *App) RefreshWingetStatus() (DashboardState, error) {
 		return st, err
 	}
 	a.emitBiLog("OK",
-		fmt.Sprintf("Winget status refreshed (%d Windows Apps checked).", len(st.Essentials)),
-		fmt.Sprintf("Status Winget diperbarui (%d Windows Apps diperiksa).", len(st.Essentials)),
+		fmt.Sprintf("Catalog refreshed (%d curated apps, %d installed entries across Winget & package managers).", len(st.Essentials), len(st.InstalledApps)),
+		fmt.Sprintf("Katalog diperbarui (%d aplikasi esensial, %d entri terpasang di Winget & package managers).", len(st.Essentials), len(st.InstalledApps)),
 	)
 	return st, nil
 }
@@ -1102,16 +1401,7 @@ func (a *App) InstallSelectedEssentials(items []BatchEssentialItem) error {
 	return nil
 }
 
-// SearchWingetApps searches the Winget catalog for apps not in the curated list.
-func (a *App) SearchWingetApps(query string) ([]essentials.WingetTableRow, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
-	rows, err := essentials.SearchWinget(ctx, query)
-	if err != nil {
-		a.emitBiLog("ERROR", err.Error(), err.Error())
-		return nil, err
-	}
-
+func (a *App) annotateWingetRows(ctx context.Context, rows []essentials.WingetTableRow) []essentials.WingetTableRow {
 	a.essMu.RLock()
 	cacheDone := a.wingetCacheDone
 	a.essMu.RUnlock()
@@ -1127,6 +1417,25 @@ func (a *App) SearchWingetApps(query string) ([]essentials.WingetTableRow, error
 	a.essMu.RLock()
 	annotated := essentials.AnnotateSearchRowsInstalled(rows, a.wingetByID, a.regApps, a.wingetRows, ignoredMap)
 	a.essMu.RUnlock()
+	for i := range annotated {
+		if annotated[i].IconURL == "" {
+			annotated[i].IconURL = pkgmgr.LookupIconMedia(pkgmgr.ManagerWinget, annotated[i].ID, annotated[i].Name).Icon
+		}
+	}
+	return annotated
+}
+
+// SearchWingetApps searches the Winget catalog for apps not in the curated list.
+func (a *App) SearchWingetApps(query string) ([]essentials.WingetTableRow, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	rows, err := essentials.SearchWinget(ctx, query)
+	if err != nil {
+		a.emitBiLog("ERROR", err.Error(), err.Error())
+		return nil, err
+	}
+
+	annotated := a.annotateWingetRows(ctx, rows)
 
 	a.emitBiLog("INFO",
 		fmt.Sprintf("Winget search %q returned %d results.", query, len(annotated)),
@@ -1135,7 +1444,275 @@ func (a *App) SearchWingetApps(query string) ([]essentials.WingetTableRow, error
 	return annotated, nil
 }
 
-// GetWingetPackageDetails returns live `winget show` metadata and a resolved icon data URI.
+// SearchPackageManager queries a Tab 1/Tab 2 extra package manager (scoop, choco, npm, pnpm, bun, uv)
+// and marks entries already installed on this machine.
+func (a *App) SearchPackageManager(manager, query string) ([]pkgmgr.PackageEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	a.essMu.RLock()
+	installedSnapshot := append([]pkgmgr.PackageEntry(nil), a.pkgMgrRows...)
+	a.essMu.RUnlock()
+
+	rows, err := pkgmgr.SearchPackages(ctx, manager, query, a.getBaseDir(), installedSnapshot)
+	if err != nil {
+		a.emitBiLog("ERROR", err.Error(), err.Error())
+		return nil, err
+	}
+	a.emitBiLog("INFO",
+		fmt.Sprintf("[%s] search %q returned %d results.", pkgmgr.NormalizeManager(manager), query, len(rows)),
+		fmt.Sprintf("[%s] pencarian %q menemukan %d hasil.", pkgmgr.NormalizeManager(manager), query, len(rows)),
+	)
+	return rows, nil
+}
+
+type unifiedSearchTask struct {
+	sourceGroup string
+	jsMgrs      []string
+	pyMgrs      []string
+	run         func(ctx context.Context) ([]essentials.WingetTableRow, []pkgmgr.PackageEntry, error)
+}
+
+// CancelUnifiedSearch aborts any in-flight multi-manager search immediately.
+func (a *App) CancelUnifiedSearch() {
+	a.searchMu.Lock()
+	if a.searchCancel != nil {
+		a.searchCancel()
+		a.searchCancel = nil
+	}
+	a.searchSeq++
+	a.searchMu.Unlock()
+}
+
+// StartUnifiedSearch runs parallel package search across Winget (including MS Store) and all installed
+// extra package managers, streaming each source's results immediately via "pkgsearch:chunk".
+func (a *App) StartUnifiedSearch(token int, query string) (UnifiedSearchStart, error) {
+	q := strings.TrimSpace(query)
+	if q == "" {
+		a.CancelUnifiedSearch()
+		return UnifiedSearchStart{Token: token, Query: ""}, nil
+	}
+
+	baseDir := a.getBaseDir()
+	a.essMu.RLock()
+	wingetAvail := a.wingetEnv.WingetAvailable
+	installedSnapshot := append([]pkgmgr.PackageEntry(nil), a.pkgMgrRows...)
+	a.essMu.RUnlock()
+
+	envs := pkgmgr.DetectManagerEnvs(baseDir)
+	envAvail := make(map[string]bool, len(envs))
+	for _, e := range envs {
+		envAvail[e.ID] = e.Available
+	}
+
+	collectAvail := func(candidates ...string) []string {
+		var res []string
+		for _, c := range candidates {
+			if envAvail[c] {
+				res = append(res, c)
+			}
+		}
+		return res
+	}
+	availJS := collectAvail(pkgmgr.ManagerNpm, pkgmgr.ManagerPnpm, pkgmgr.ManagerBun)
+	availPY := collectAvail(pkgmgr.ManagerUv, pkgmgr.ManagerPip)
+
+	var tasks []unifiedSearchTask
+	if wingetAvail {
+		tasks = append(tasks, unifiedSearchTask{
+			sourceGroup: "winget",
+			run: func(ctx context.Context) ([]essentials.WingetTableRow, []pkgmgr.PackageEntry, error) {
+				rows, err := essentials.SearchWinget(ctx, q)
+				if err != nil {
+					return nil, nil, err
+				}
+				return a.annotateWingetRows(ctx, rows), nil, nil
+			},
+		})
+	}
+	for _, directMgr := range []string{pkgmgr.ManagerScoop, pkgmgr.ManagerChoco} {
+		if !envAvail[directMgr] {
+			continue
+		}
+		mgrID := directMgr
+		tasks = append(tasks, unifiedSearchTask{
+			sourceGroup: mgrID,
+			run: func(ctx context.Context) ([]essentials.WingetTableRow, []pkgmgr.PackageEntry, error) {
+				rows, err := pkgmgr.SearchPackages(ctx, mgrID, q, baseDir, installedSnapshot)
+				return nil, rows, err
+			},
+		})
+	}
+	appendSharedRegistryTask := func(group string, mgrs []string) {
+		if len(mgrs) == 0 {
+			return
+		}
+		mgrsCopy := append([]string(nil), mgrs...)
+		t := unifiedSearchTask{
+			sourceGroup: group,
+			run: func(ctx context.Context) ([]essentials.WingetTableRow, []pkgmgr.PackageEntry, error) {
+				rows, err := pkgmgr.SearchPackages(ctx, mgrsCopy[0], q, baseDir, installedSnapshot)
+				if err != nil {
+					return nil, nil, err
+				}
+				rows = pkgmgr.AnnotateInstalledAcrossManagers(rows, mgrsCopy, installedSnapshot)
+				return nil, rows, nil
+			},
+		}
+		if group == "js" {
+			t.jsMgrs = mgrsCopy
+		} else if group == "py" {
+			t.pyMgrs = mgrsCopy
+		}
+		tasks = append(tasks, t)
+	}
+	appendSharedRegistryTask("js", availJS)
+	appendSharedRegistryTask("py", availPY)
+	for _, devMgr := range []string{pkgmgr.ManagerCargo, pkgmgr.ManagerDotnet, pkgmgr.ManagerPSGallery} {
+		if !envAvail[devMgr] {
+			continue
+		}
+		mgrID := devMgr
+		tasks = append(tasks, unifiedSearchTask{
+			sourceGroup: mgrID,
+			run: func(ctx context.Context) ([]essentials.WingetTableRow, []pkgmgr.PackageEntry, error) {
+				rows, err := pkgmgr.SearchPackages(ctx, mgrID, q, baseDir, installedSnapshot)
+				return nil, rows, err
+			},
+		})
+	}
+
+	sources := make([]string, 0, len(tasks))
+	for _, t := range tasks {
+		sources = append(sources, t.sourceGroup)
+	}
+
+	a.searchMu.Lock()
+	if a.searchCancel != nil {
+		a.searchCancel()
+		a.searchCancel = nil
+	}
+	a.searchSeq = token
+	if len(tasks) == 0 {
+		a.searchMu.Unlock()
+		return UnifiedSearchStart{Token: token, Query: q, Total: 0}, nil
+	}
+	searchCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	a.searchCancel = cancel
+	a.searchMu.Unlock()
+
+	a.emitBiLog("INFO",
+		fmt.Sprintf("Unified search %q across %d active sources (%s)...", q, len(sources), strings.Join(sources, ", ")),
+		fmt.Sprintf("Pencarian terpadu %q di %d sumber aktif (%s)...", q, len(sources), strings.Join(sources, ", ")),
+	)
+
+	go a.executeUnifiedSearchTasks(searchCtx, cancel, token, q, tasks, func(chunk UnifiedSearchChunk) {
+		a.searchMu.Lock()
+		isLatest := a.searchSeq == token
+		if chunk.Done && isLatest {
+			a.searchCancel = nil
+		}
+		a.searchMu.Unlock()
+
+		if !isLatest || searchCtx.Err() != nil {
+			return
+		}
+		if chunk.Error != "" {
+			a.emitBiLog("WARN",
+				fmt.Sprintf("[%s] search failed: %s", chunk.SourceGroup, chunk.Error),
+				fmt.Sprintf("[%s] pencarian gagal: %s", chunk.SourceGroup, chunk.Error),
+			)
+		}
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "pkgsearch:chunk", chunk)
+		}
+	})
+
+	return UnifiedSearchStart{
+		Token:   token,
+		Query:   q,
+		Total:   len(sources),
+		Sources: sources,
+		JSMgrs:  availJS,
+		PyMgrs:  availPY,
+	}, nil
+}
+
+func (a *App) executeUnifiedSearchTasks(
+	searchCtx context.Context,
+	cancel context.CancelFunc,
+	token int,
+	query string,
+	tasks []unifiedSearchTask,
+	emit func(UnifiedSearchChunk),
+) {
+	defer cancel()
+	total := len(tasks)
+	if total == 0 {
+		return
+	}
+
+	orderedSources := make([]string, total)
+	pendingMap := make(map[string]bool, total)
+	for i, t := range tasks {
+		orderedSources[i] = t.sourceGroup
+		pendingMap[t.sourceGroup] = true
+	}
+
+	var mu sync.Mutex
+	completed := 0
+	var wg sync.WaitGroup
+
+	for _, t := range tasks {
+		task := t
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			srcCtx, srcCancel := context.WithTimeout(searchCtx, 22*time.Second)
+			defer srcCancel()
+
+			wRows, pRows, err := task.run(srcCtx)
+			if searchCtx.Err() != nil {
+				return
+			}
+
+			mu.Lock()
+			completed++
+			delete(pendingMap, task.sourceGroup)
+			pending := make([]string, 0, len(pendingMap))
+			for _, s := range orderedSources {
+				if pendingMap[s] {
+					pending = append(pending, s)
+				}
+			}
+			done := completed >= total
+			curCompleted := completed
+			mu.Unlock()
+
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+			}
+			emit(UnifiedSearchChunk{
+				Token:       token,
+				Query:       query,
+				SourceGroup: task.sourceGroup,
+				JSMgrs:      append([]string(nil), task.jsMgrs...),
+				PyMgrs:      append([]string(nil), task.pyMgrs...),
+				WingetRows:  wRows,
+				PkgRows:     pRows,
+				Error:       errStr,
+				Completed:   curCompleted,
+				Total:       total,
+				Pending:     pending,
+				Done:        done,
+			})
+		}()
+	}
+	wg.Wait()
+}
+
+// GetWingetPackageDetails returns live `winget show` metadata plus UniGetUI icons/screenshots.
 func (a *App) GetWingetPackageDetails(wingetID, source string) (essentials.PackageDetails, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -1143,21 +1720,51 @@ func (a *App) GetWingetPackageDetails(wingetID, source string) (essentials.Packa
 	if err != nil {
 		return essentials.PackageDetails{}, err
 	}
+	det.Manager = pkgmgr.ManagerWinget
+	media := pkgmgr.LookupIconMedia(pkgmgr.ManagerWinget, det.ID, det.Name)
+	if det.IconURL == "" {
+		det.IconURL = media.Icon
+	}
+	if len(det.Screenshots) == 0 && len(media.Screenshots) > 0 {
+		det.Screenshots = media.Screenshots
+	}
 	if det.InstallerSize > 0 {
 		a.cacheResolvedSize("__ess:"+strings.ToLower(strings.TrimSpace(wingetID)), det.InstallerSize, det.InstallerURL)
 	}
 	return det, nil
 }
 
-// EnrichWingetSearch fetches publisher, description, homepage, license, and icons in parallel
+// GetUniversalPackageDetails resolves rich metadata, icons, and preview screenshots for any Tab 2 package manager
+// (Winget, MS Store, Scoop, Chocolatey, npm, pnpm, Bun, uv).
+func (a *App) GetUniversalPackageDetails(manager, pkgID, source string) (essentials.PackageDetails, error) {
+	mgr := pkgmgr.NormalizeManager(manager)
+	if mgr == pkgmgr.ManagerWinget {
+		return a.GetWingetPackageDetails(pkgID, source)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return pkgmgr.GetPackageDetails(ctx, mgr, pkgID, source, a.getBaseDir())
+}
+
+// EnrichWingetSearch fetches publisher, description, homepage, license, icons, and screenshots in parallel
 // for the top Winget search results so users can inspect exact app details before installing.
 func (a *App) EnrichWingetSearch(rows []essentials.WingetTableRow) []essentials.PackageDetails {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	details := essentials.EnrichSearchRows(ctx, rows, 12)
-	for _, d := range details {
-		if d.ID != "" && d.InstallerSize > 0 {
-			a.cacheResolvedSize("__ess:"+strings.ToLower(strings.TrimSpace(d.ID)), d.InstallerSize, d.InstallerURL)
+	for i := range details {
+		details[i].Manager = pkgmgr.ManagerWinget
+		if details[i].ID != "" {
+			media := pkgmgr.LookupIconMedia(pkgmgr.ManagerWinget, details[i].ID, details[i].Name)
+			if details[i].IconURL == "" {
+				details[i].IconURL = media.Icon
+			}
+			if len(details[i].Screenshots) == 0 && len(media.Screenshots) > 0 {
+				details[i].Screenshots = media.Screenshots
+			}
+			if details[i].InstallerSize > 0 {
+				a.cacheResolvedSize("__ess:"+strings.ToLower(strings.TrimSpace(details[i].ID)), details[i].InstallerSize, details[i].InstallerURL)
+			}
 		}
 	}
 	return details
@@ -1375,6 +1982,10 @@ func (a *App) runWingetByIDAction(name, wingetID, source, mode string) error {
 			verbEN, verbID = "Updating", "Memperbarui"
 			pastEN, pastID = "Updated", "Berhasil memperbarui"
 			detailVerb = "Updating"
+		} else if mode == "uninstall" {
+			verbEN, verbID = "Uninstalling", "Menghapus"
+			pastEN, pastID = "Uninstalled", "Berhasil menghapus"
+			detailVerb = "Uninstalling"
 		}
 		a.emitBiLog("INFO",
 			fmt.Sprintf("%s %s (%s)...", verbEN, display, trimmedID),
@@ -1409,7 +2020,67 @@ func (a *App) UpdateWingetByID(name, wingetID, source string) error {
 	return a.runWingetByIDAction(name, wingetID, source, "update")
 }
 
-// UpdateAllInstalled updates a list of installed Winget apps sequentially while respecting ignored_updates.conf.
+// RunPackageAction executes install, update, or uninstall for any Tab 2 package manager (winget, scoop, choco, npm, pnpm, bun, uv).
+func (a *App) RunPackageAction(manager, pkgID, name, source, mode string) error {
+	mgr := pkgmgr.NormalizeManager(manager)
+	if mgr == pkgmgr.ManagerWinget {
+		return a.runWingetByIDAction(name, pkgID, source, mode)
+	}
+	if !pkgmgr.IsSupportedExtraManager(mgr) {
+		return a.biErr(
+			fmt.Sprintf("unsupported package manager: %s", manager),
+			fmt.Sprintf("package manager tidak didukung: %s", manager),
+		)
+	}
+	trimmedID := strings.TrimSpace(pkgID)
+	if trimmedID == "" {
+		return a.biErr("empty package ID", "ID paket kosong")
+	}
+	ctx, err := a.beginTask()
+	if err != nil {
+		return err
+	}
+	display := strings.TrimSpace(name)
+	if display == "" {
+		display = trimmedID
+	}
+	baseDir := a.getBaseDir()
+
+	go func() {
+		defer a.endTask()
+		verb := strings.ToLower(strings.TrimSpace(mode))
+		if verb == "" {
+			verb = "install"
+		}
+		a.emitBiLog("INFO",
+			fmt.Sprintf("[%s] %s %s...", mgr, verb, display),
+			fmt.Sprintf("[%s] menjalankan %s %s...", mgr, verb, display),
+		)
+		runtime.EventsEmit(a.ctx, "task:progress", archive.ProgressEvent{
+			Stage:   "install",
+			Percent: -1,
+			Detail:  fmt.Sprintf("[%s] %s %s...", mgr, verb, display),
+		})
+		if err := pkgmgr.RunAction(ctx, mgr, trimmedID, source, verb, baseDir, a.emitBiLog); err != nil {
+			a.emitBiLog("ERROR",
+				fmt.Sprintf("[%s] %s %s failed: %v", mgr, verb, display, err),
+				fmt.Sprintf("[%s] %s %s gagal: %v", mgr, verb, display, err),
+			)
+		} else {
+			tools.InvalidateStatusCache()
+			a.refreshWingetCache(context.Background())
+			a.emitBiLog("OK",
+				fmt.Sprintf("[%s] %s %s completed.", mgr, verb, display),
+				fmt.Sprintf("[%s] %s %s selesai.", mgr, verb, display),
+			)
+		}
+		runtime.EventsEmit(a.ctx, "task:progress", archive.ProgressEvent{Stage: "idle", Percent: 0})
+		runtime.EventsEmit(a.ctx, "state:refresh")
+	}()
+	return nil
+}
+
+// UpdateAllInstalled updates a list of installed apps/packages across Winget and extra managers sequentially while respecting ignored_updates.conf.
 func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 	if len(targets) == 0 {
 		return a.biErr("no updates queued", "tidak ada aplikasi untuk diperbarui")
@@ -1420,12 +2091,25 @@ func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 	queue := make([]WingetUpdateTarget, 0, len(targets))
 	for _, t := range targets {
 		id := strings.TrimSpace(t.WingetID)
-		if id == "" || !essentials.IsManageableWingetID(id) {
+		if id == "" {
 			continue
 		}
-		if _, isIgnored := ignoredMap[strings.ToLower(id)]; isIgnored {
+		mgr := pkgmgr.NormalizeManager(t.Manager)
+		if mgr == pkgmgr.ManagerWinget && !essentials.IsManageableWingetID(id) {
 			continue
 		}
+		if mgr != pkgmgr.ManagerWinget && !pkgmgr.IsSupportedExtraManager(mgr) {
+			continue
+		}
+		ignKey := strings.ToLower(pkgmgr.IgnoreKey(mgr, id))
+		ignEntry, hasIgn := ignoredMap[ignKey]
+		if !hasIgn && mgr == pkgmgr.ManagerWinget {
+			ignEntry, hasIgn = ignoredMap[strings.ToLower(id)]
+		}
+		if fullIgn, verSkipped := essentials.EvaluateIgnoredPolicy(ignEntry, hasIgn, t.AvailableVer); fullIgn || verSkipped {
+			continue
+		}
+		t.Manager = mgr
 		queue = append(queue, t)
 	}
 	if len(queue) == 0 {
@@ -1436,14 +2120,15 @@ func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 	if err != nil {
 		return err
 	}
+	baseDir := a.getBaseDir()
 
 	go func() {
 		defer a.endTask()
 		total := len(queue)
 		succeeded, failed := 0, 0
 		a.emitBiLog("INFO",
-			fmt.Sprintf("Starting sequential Winget update for %d applications...", total),
-			fmt.Sprintf("Memulai pembaruan berurutan Winget untuk %d aplikasi...", total),
+			fmt.Sprintf("Starting sequential update for %d packages...", total),
+			fmt.Sprintf("Memulai pembaruan berurutan untuk %d paket...", total),
 		)
 
 		for idx, item := range queue {
@@ -1463,25 +2148,33 @@ func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 				Detail:  fmt.Sprintf("%s...", batchDetail),
 			})
 			a.emitBiLog("INFO",
-				fmt.Sprintf("[%d/%d] Updating %s (%s)...", idx+1, total, display, item.WingetID),
-				fmt.Sprintf("[%d/%d] Memperbarui %s (%s)...", idx+1, total, display, item.WingetID),
+				fmt.Sprintf("[%d/%d] [%s] Updating %s (%s)...", idx+1, total, item.Manager, display, item.WingetID),
+				fmt.Sprintf("[%d/%d] [%s] Memperbarui %s (%s)...", idx+1, total, item.Manager, display, item.WingetID),
 			)
-			app := essentials.EssentialApp{
-				ID:           item.WingetID,
-				Name:         display,
-				WingetID:     item.WingetID,
-				Source:       item.Source,
-				ExpectedSize: a.getCachedURLSize("__ess:" + strings.ToLower(strings.TrimSpace(item.WingetID))),
+
+			var updateErr error
+			if item.Manager == pkgmgr.ManagerWinget {
+				app := essentials.EssentialApp{
+					ID:           item.WingetID,
+					Name:         display,
+					WingetID:     item.WingetID,
+					Source:       item.Source,
+					ExpectedSize: a.getCachedURLSize("__ess:" + strings.ToLower(strings.TrimSpace(item.WingetID))),
+				}
+				batchProgress := func(ev archive.ProgressEvent) {
+					ev.Detail = batchDetail
+					a.emitProgress(ev)
+				}
+				updateErr = essentials.RunEssentialAction(ctx, app, "update", "latest", a.emitBiLog, batchProgress)
+			} else {
+				updateErr = pkgmgr.RunAction(ctx, item.Manager, item.WingetID, item.Source, "update", baseDir, a.emitBiLog)
 			}
-			batchProgress := func(ev archive.ProgressEvent) {
-				ev.Detail = batchDetail
-				a.emitProgress(ev)
-			}
-			if err := essentials.RunEssentialAction(ctx, app, "update", "latest", a.emitBiLog, batchProgress); err != nil {
+
+			if updateErr != nil {
 				failed++
 				a.emitBiLog("ERROR",
-					fmt.Sprintf("[%d/%d] Failed updating %s: %v", idx+1, total, display, err),
-					fmt.Sprintf("[%d/%d] Gagal memperbarui %s: %v", idx+1, total, display, err),
+					fmt.Sprintf("[%d/%d] Failed updating %s: %v", idx+1, total, display, updateErr),
+					fmt.Sprintf("[%d/%d] Gagal memperbarui %s: %v", idx+1, total, display, updateErr),
 				)
 			} else {
 				succeeded++
@@ -1492,6 +2185,7 @@ func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 			}
 		}
 
+		tools.InvalidateStatusCache()
 		a.refreshWingetCache(context.Background())
 		a.emitBiLog("OK",
 			fmt.Sprintf("Batch update finished: %d succeeded, %d failed.", succeeded, failed),
@@ -1503,8 +2197,49 @@ func (a *App) UpdateAllInstalled(targets []WingetUpdateTarget) error {
 	return nil
 }
 
-// IgnoreInstalledApp excludes an app from updates & active Installed lists, and pins it in Windows Winget if supported.
-func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardState, error) {
+// SkipInstalledAppVersion skips only one specific available version (e.g. "2.5.0") while allowing future updates to notify again.
+func (a *App) SkipInstalledAppVersion(manager, id, name, source, skipVersion string) (DashboardState, error) {
+	mgr := pkgmgr.NormalizeManager(manager)
+	trimmedID := strings.TrimSpace(id)
+	cleanVer := strings.TrimPrefix(strings.TrimSpace(skipVersion), "v")
+	if trimmedID == "" || cleanVer == "" {
+		return DashboardState{}, a.biErr("empty app ID or version", "ID aplikasi atau versi kosong")
+	}
+	ignConfPath, err := essentials.EnsureIgnoredConfig(a.appDir)
+	if err != nil {
+		return DashboardState{}, err
+	}
+
+	display := strings.TrimSpace(name)
+	if display == "" {
+		display = trimmedID
+	}
+	storeID := pkgmgr.IgnoreKey(mgr, trimmedID)
+	storeSource := strings.TrimSpace(source)
+	if storeSource == "" || (mgr != pkgmgr.ManagerWinget && !strings.EqualFold(storeSource, mgr)) {
+		storeSource = mgr
+	}
+	if err := essentials.AddIgnoredApp(ignConfPath, essentials.IgnoredApp{
+		ID:             storeID,
+		Name:           display,
+		Source:         storeSource,
+		WingetPinned:   false,
+		SkippedVersion: cleanVer,
+		Reason:         fmt.Sprintf("Skipped v%s via UniDevUI", cleanVer),
+	}); err != nil {
+		return DashboardState{}, err
+	}
+	a.markIgnConfigSelfWritten(ignConfPath)
+	a.emitBiLog("OK",
+		fmt.Sprintf("Skipped v%s for %s (%s); newer versions will notify normally.", cleanVer, display, storeID),
+		fmt.Sprintf("Melewati v%s untuk %s (%s); versi lebih baru tetap akan diberitahukan.", cleanVer, display, storeID),
+	)
+	return a.GetDashboardState()
+}
+
+// IgnoreInstalledApp excludes an app or CLI package from updates & active Installed lists, and pins it in Windows Winget if applicable.
+func (a *App) IgnoreInstalledApp(manager, id, name, source, reason string) (DashboardState, error) {
+	mgr := pkgmgr.NormalizeManager(manager)
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
 		return DashboardState{}, a.biErr("empty app ID", "ID aplikasi kosong")
@@ -1523,7 +2258,7 @@ func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardStat
 	}
 
 	pinned := false
-	if essentials.IsManageableWingetID(trimmedID) {
+	if mgr == pkgmgr.ManagerWinget && essentials.IsManageableWingetID(trimmedID) {
 		pinCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		pinErr := essentials.WingetPinAdd(pinCtx, trimmedID, source, a.emitBiLog)
 		cancel()
@@ -1537,10 +2272,15 @@ func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardStat
 		}
 	}
 
+	storeID := pkgmgr.IgnoreKey(mgr, trimmedID)
+	storeSource := strings.TrimSpace(source)
+	if storeSource == "" || (mgr != pkgmgr.ManagerWinget && !strings.EqualFold(storeSource, mgr)) {
+		storeSource = mgr
+	}
 	if err := essentials.AddIgnoredApp(ignConfPath, essentials.IgnoredApp{
-		ID:           trimmedID,
+		ID:           storeID,
 		Name:         display,
-		Source:       strings.TrimSpace(source),
+		Source:       storeSource,
 		WingetPinned: pinned,
 		Reason:       strings.TrimSpace(reason),
 	}); err != nil {
@@ -1555,15 +2295,61 @@ func (a *App) IgnoreInstalledApp(id, name, source, reason string) (DashboardStat
 		)
 	} else {
 		a.emitBiLog("OK",
-			fmt.Sprintf("Ignored %s (%s) in ignored_updates.conf.", display, trimmedID),
-			fmt.Sprintf("Mengabaikan %s (%s) di ignored_updates.conf.", display, trimmedID),
+			fmt.Sprintf("Ignored %s (%s) in ignored_updates.conf.", display, storeID),
+			fmt.Sprintf("Mengabaikan %s (%s) di ignored_updates.conf.", display, storeID),
 		)
 	}
 	return a.GetDashboardState()
 }
 
-// UnignoreInstalledApp restores an ignored app to active Installed & Updates tracking and removes any Windows Winget pin.
-func (a *App) UnignoreInstalledApp(id string) (DashboardState, error) {
+// PauseInstalledAppUpdates suppresses update notifications for an app/package until N days from today (default 7).
+func (a *App) PauseInstalledAppUpdates(manager, id, name, source string, days int) (DashboardState, error) {
+	mgr := pkgmgr.NormalizeManager(manager)
+	trimmedID := strings.TrimSpace(id)
+	if trimmedID == "" {
+		return DashboardState{}, a.biErr("empty app ID", "ID aplikasi kosong")
+	}
+	if days <= 0 {
+		days = 7
+	} else if days > 365 {
+		days = 365
+	}
+	ignConfPath, err := essentials.EnsureIgnoredConfig(a.appDir)
+	if err != nil {
+		return DashboardState{}, err
+	}
+
+	display := strings.TrimSpace(name)
+	if display == "" {
+		display = trimmedID
+	}
+	storeID := pkgmgr.IgnoreKey(mgr, trimmedID)
+	storeSource := strings.TrimSpace(source)
+	if storeSource == "" || (mgr != pkgmgr.ManagerWinget && !strings.EqualFold(storeSource, mgr)) {
+		storeSource = mgr
+	}
+	untilDate := time.Now().AddDate(0, 0, days).Format("2006-01-02")
+	if err := essentials.AddIgnoredApp(ignConfPath, essentials.IgnoredApp{
+		ID:           storeID,
+		Name:         display,
+		Source:       storeSource,
+		WingetPinned: false,
+		PauseUntil:   untilDate,
+		Reason:       fmt.Sprintf("Paused updates until %s via UniDevUI", untilDate),
+	}); err != nil {
+		return DashboardState{}, err
+	}
+	a.markIgnConfigSelfWritten(ignConfPath)
+	a.emitBiLog("OK",
+		fmt.Sprintf("Paused update alerts for %s (%s) until %s (%d days).", display, storeID, untilDate, days),
+		fmt.Sprintf("Menunda notifikasi update untuk %s (%s) hingga %s (%d hari).", display, storeID, untilDate, days),
+	)
+	return a.GetDashboardState()
+}
+
+// UnignoreInstalledApp restores an ignored app/package to active Installed & Updates tracking and removes any Windows Winget pin.
+func (a *App) UnignoreInstalledApp(manager, id string) (DashboardState, error) {
+	mgr := pkgmgr.NormalizeManager(manager)
 	trimmedID := strings.TrimSpace(id)
 	if trimmedID == "" {
 		return DashboardState{}, a.biErr("empty app ID", "ID aplikasi kosong")
@@ -1572,9 +2358,16 @@ func (a *App) UnignoreInstalledApp(id string) (DashboardState, error) {
 	if err != nil {
 		return DashboardState{}, err
 	}
-	removed, found, err := essentials.RemoveIgnoredApp(ignConfPath, trimmedID)
+
+	storeID := pkgmgr.IgnoreKey(mgr, trimmedID)
+	removed, found, err := essentials.RemoveIgnoredApp(ignConfPath, storeID)
 	if err != nil {
 		return DashboardState{}, err
+	}
+	if !found && storeID != trimmedID {
+		if r2, f2, err2 := essentials.RemoveIgnoredApp(ignConfPath, trimmedID); err2 == nil && f2 {
+			removed, found = r2, true
+		}
 	}
 	a.markIgnConfigSelfWritten(ignConfPath)
 
@@ -1583,7 +2376,7 @@ func (a *App) UnignoreInstalledApp(id string) (DashboardState, error) {
 		display = trimmedID
 	}
 
-	if essentials.IsManageableWingetID(trimmedID) {
+	if mgr == pkgmgr.ManagerWinget && essentials.IsManageableWingetID(trimmedID) {
 		pinCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		pinErr := essentials.WingetPinRemove(pinCtx, trimmedID, removed.Source, a.emitBiLog)
 		cancel()
@@ -1697,15 +2490,22 @@ func (a *App) SetLanguage(lang string) (DashboardState, error) {
 	}
 	a.dirMu.Lock()
 	a.language = norm
-	baseDir := a.baseDir
+	s := a.settings
+	if strings.TrimSpace(s.BaseDir) == "" {
+		s.BaseDir = a.baseDir
+	}
+	s.Language = norm
+	s = config.NormalizeSettings(s)
+	a.settings = s
 	a.dirMu.Unlock()
 
-	if err := config.SaveSettings(config.AppSettings{BaseDir: baseDir, Language: norm}); err != nil {
+	if err := config.SaveSettings(s); err != nil {
 		a.emitBiLog("WARN",
 			fmt.Sprintf("Failed saving language preference: %v", err),
 			fmt.Sprintf("Gagal menyimpan preferensi bahasa: %v", err),
 		)
 	}
+	a.syncTrayAndPowerState()
 	return a.GetDashboardState()
 }
 
@@ -1862,22 +2662,270 @@ func (a *App) SetOutputDir(newDir string) (DashboardState, error) {
 		return DashboardState{}, fmt.Errorf("failed to create %s: %w", cleanNew, err)
 	}
 
-	if err := config.SaveSettings(config.AppSettings{BaseDir: cleanNew, Language: a.getLanguage()}); err != nil {
+	a.dirMu.Lock()
+	a.baseDir = cleanNew
+	s := a.settings
+	s.BaseDir = cleanNew
+	s.Language = a.language
+	s = config.NormalizeSettings(s)
+	a.settings = s
+	a.dirMu.Unlock()
+
+	if err := config.SaveSettings(s); err != nil {
 		a.emitBiLog("WARN",
 			fmt.Sprintf("Directory changed to %s, but failed saving settings.json: %v", cleanNew, err),
 			fmt.Sprintf("Folder diubah ke %s, namun gagal menyimpan settings.json: %v", cleanNew, err),
 		)
 	}
 
-	a.dirMu.Lock()
-	a.baseDir = cleanNew
-	a.dirMu.Unlock()
-
 	a.emitBiLog("OK",
 		fmt.Sprintf("Output path changed to: %s (configs remain in %s)", cleanNew, a.appDir),
 		fmt.Sprintf("Output path diubah ke: %s (config tetap di %s)", cleanNew, a.appDir),
 	)
 	return a.GetDashboardState()
+}
+
+// SaveAppSettings updates all user preferences (output folder, language, close/tray behavior,
+// Windows autostart, and background update monitor) and synchronizes Windows Registry Run key.
+func (a *App) SaveAppSettings(in config.AppSettings) (DashboardState, error) {
+	a.taskMu.Lock()
+	isBusy := a.busy
+	a.taskMu.Unlock()
+
+	norm := config.NormalizeSettings(in)
+	cur := a.getSettings()
+	if norm.LastCheckUnix == 0 && cur.LastCheckUnix > 0 {
+		norm.LastCheckUnix = cur.LastCheckUnix
+	}
+	baseChanged := !strings.EqualFold(filepath.Clean(norm.BaseDir), filepath.Clean(cur.BaseDir))
+	if baseChanged {
+		if isBusy {
+			return DashboardState{}, a.biErr(
+				"cannot change output directory while another task is running",
+				"tidak dapat mengubah folder output saat proses lain sedang berjalan",
+			)
+		}
+		if !filepath.IsAbs(norm.BaseDir) {
+			return DashboardState{}, a.biErr(
+				"output folder path must be an absolute path (e.g. D:\\AppPath)",
+				"path folder output harus berupa path absolut (misal D:\\AppPath)",
+			)
+		}
+		if err := os.MkdirAll(norm.BaseDir, 0o755); err != nil {
+			return DashboardState{}, fmt.Errorf("failed to create %s: %w", norm.BaseDir, err)
+		}
+	}
+
+	if err := autostart.Sync(norm.AutoStart, norm.StartInTray); err != nil {
+		return DashboardState{}, a.biErr(
+			fmt.Sprintf("failed updating Windows startup entry: %v", err),
+			fmt.Sprintf("gagal mengatur startup Windows: %v", err),
+		)
+	}
+
+	a.dirMu.Lock()
+	a.settings = norm
+	a.baseDir = norm.BaseDir
+	a.language = norm.Language
+	a.dirMu.Unlock()
+
+	if err := config.SaveSettings(norm); err != nil {
+		return DashboardState{}, err
+	}
+	a.syncTrayAndPowerState()
+
+	a.emitBiLog("OK",
+		"Settings saved successfully.",
+		"Pengaturan berhasil disimpan.",
+	)
+	return a.GetDashboardState()
+}
+
+// MinimizeWindow minimizes the UniDevUI window and engages Efficiency Mode when idle.
+func (a *App) MinimizeWindow() {
+	if a.ctx != nil {
+		runtime.WindowMinimise(a.ctx)
+	}
+	time.AfterFunc(150*time.Millisecond, a.syncTrayAndPowerState)
+}
+
+// SyncPowerState re-evaluates EcoQoS and tray state after window focus or restore transitions.
+func (a *App) SyncPowerState() {
+	a.syncTrayAndPowerState()
+}
+
+// HideToTray hides the main UniDevUI window into the Windows System Tray.
+func (a *App) HideToTray() {
+	a.windowVisible.Store(false)
+	if a.ctx != nil {
+		runtime.WindowHide(a.ctx)
+	}
+	debug.FreeOSMemory()
+	a.syncTrayAndPowerState()
+}
+
+// ShowWindow restores and focuses the UniDevUI window from the System Tray.
+func (a *App) ShowWindow() {
+	a.windowVisible.Store(true)
+	a.hasTaskError.Store(false)
+	if a.ctx != nil {
+		runtime.WindowUnminimise(a.ctx)
+		runtime.WindowShow(a.ctx)
+	}
+	a.syncTrayAndPowerState()
+	if !a.hasWingetCache() {
+		go a.ensureInitialCacheLoaded()
+	}
+}
+
+// QuitApp stops the tray icon cleanly and exits the UniDevUI application.
+func (a *App) QuitApp() {
+	a.allowQuit.Store(true)
+	if a.trayMgr != nil {
+		a.trayMgr.Stop()
+	}
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
+}
+
+// ConfirmCloseAction handles the user's choice from the close confirmation modal ("tray" or "quit")
+// and optionally remembers that choice in settings.json.
+func (a *App) ConfirmCloseAction(action string, remember bool) error {
+	act := strings.ToLower(strings.TrimSpace(action))
+	if act != "tray" && act != "quit" {
+		return fmt.Errorf("unsupported close action: %s", action)
+	}
+	if remember {
+		a.dirMu.Lock()
+		s := a.settings
+		s.BaseDir = a.baseDir
+		s.Language = a.language
+		s.CloseAction = act
+		s = config.NormalizeSettings(s)
+		a.settings = s
+		a.dirMu.Unlock()
+		_ = config.SaveSettings(s)
+		a.requestStateRefresh()
+	}
+	if act == "tray" {
+		a.HideToTray()
+		return nil
+	}
+	a.QuitApp()
+	return nil
+}
+
+func (a *App) handleBeforeClose(_ context.Context) bool {
+	if a.allowQuit.Load() {
+		if a.trayMgr != nil {
+			a.trayMgr.Stop()
+		}
+		return false
+	}
+	s := a.getSettings()
+	switch s.CloseAction {
+	case "quit":
+		a.allowQuit.Store(true)
+		if a.trayMgr != nil {
+			a.trayMgr.Stop()
+		}
+		return false
+	case "tray":
+		a.HideToTray()
+		return true
+	default:
+		a.ShowWindow()
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "app:confirm-close")
+		}
+		return true
+	}
+}
+
+func (a *App) toggleAutoStartFromTray() {
+	s := a.getSettings()
+	s.AutoStart = !s.AutoStart
+	if s.AutoStart {
+		// Windows startup launches silently into the System Tray unless opened explicitly.
+		s.StartInTray = true
+	}
+	if _, err := a.SaveAppSettings(s); err == nil {
+		a.requestStateRefresh()
+	}
+}
+
+func (a *App) isWindowVisibleOnScreen() bool {
+	if !a.windowVisible.Load() {
+		return false
+	}
+	if a.ctx != nil && runtime.WindowIsMinimised(a.ctx) {
+		return false
+	}
+	return true
+}
+
+func (a *App) syncTrayAndPowerState() {
+	a.taskMu.Lock()
+	busy := a.busy || a.scanBusy.Load()
+	a.taskMu.Unlock()
+
+	visible := a.isWindowVisibleOnScreen()
+	// Engage Windows Efficiency Mode (EcoQoS) whenever hidden in Tray or minimized & idle.
+	syspower.SetEfficiencyMode(!visible && !busy)
+
+	if a.trayMgr == nil {
+		return
+	}
+	s := a.getSettings()
+	updCount := int(a.updateCount.Load())
+	status := tray.StatusIdle
+	tip := "UniDevUI"
+	switch {
+	case busy:
+		status = tray.StatusBlue
+		if s.Language == "id" {
+			tip = "UniDevUI — Sedang memproses..."
+		} else {
+			tip = "UniDevUI — Task in progress..."
+		}
+	case a.hasTaskError.Load():
+		status = tray.StatusOrange
+		if s.Language == "id" {
+			tip = "UniDevUI — Selesai dengan peringatan/error"
+		} else {
+			tip = "UniDevUI — Finished with warnings/errors"
+		}
+	case updCount > 0:
+		status = tray.StatusGreen
+		if s.Language == "id" {
+			tip = fmt.Sprintf("UniDevUI — %d update tersedia", updCount)
+		} else {
+			tip = fmt.Sprintf("UniDevUI — %d update(s) available", updCount)
+		}
+	}
+	a.trayMgr.Update(status, updCount, s.Language, s.AutoStart, tip)
+}
+
+func (a *App) persistLastCheckUnix(ts int64) {
+	a.dirMu.Lock()
+	s := a.settings
+	if strings.TrimSpace(s.BaseDir) == "" {
+		s.BaseDir = a.baseDir
+	}
+	if strings.TrimSpace(s.Language) == "" {
+		s.Language = a.language
+	}
+	s.LastCheckUnix = ts
+	s = config.NormalizeSettings(s)
+	a.settings = s
+	a.dirMu.Unlock()
+	_ = config.SaveSettings(s)
+}
+
+// CheckUpdatesFromTray triggers a background scan immediately from the System Tray menu.
+func (a *App) CheckUpdatesFromTray() {
+	a.runBackgroundUpdateCycle(a.ctx, true)
 }
 
 // SyncDefaultPackages appends missing built-in entries to both packages.conf and essentials.conf without overwriting edits.
@@ -2288,44 +3336,9 @@ func (a *App) UpdateLTSLinks() error {
 			"Memeriksa versi LTS & stabil terbaru untuk paket, CLI/SDK tools, dan Winget...",
 		)
 
-		updates := make(map[string][]config.VersionEntry)
+		updates := a.fetchLTSUpdates(ctx, pkgs, 4, true)
 		var mu sync.Mutex
 		var wg sync.WaitGroup
-
-		for _, pkg := range pkgs {
-			if pkg.LTSProvider == "" || pkg.LTSProvider == "manual" {
-				continue
-			}
-			p := pkg
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				vers, fErr := lts.FetchLatestVersions(ctx, p.LTSProvider)
-				if fErr != nil {
-					a.emitBiLog("WARN",
-						fmt.Sprintf("[%s] update check failed (%s): %v", p.ID, p.LTSProvider, fErr),
-						fmt.Sprintf("[%s] gagal cek update (%s): %v", p.ID, p.LTSProvider, fErr),
-					)
-					return
-				}
-				if len(vers) == 0 {
-					return
-				}
-				mu.Lock()
-				updates[p.ID] = vers
-				mu.Unlock()
-
-				var list []string
-				for _, v := range vers {
-					list = append(list, v.Version)
-				}
-				verList := strings.Join(list, ", ")
-				a.emitBiLog("OK",
-					fmt.Sprintf("[%s] latest versions: %s", p.ID, verList),
-					fmt.Sprintf("[%s] versi terbaru: %s", p.ID, verList),
-				)
-			}()
-		}
 
 		toolCount := 0
 		wg.Add(1)
@@ -2553,7 +3566,7 @@ func (a *App) refreshEssentialSizes(ctx context.Context) bool {
 	found := make(map[string]int64)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 6)
+	sem := make(chan struct{}, 2)
 
 	for _, item := range todo {
 		app := item
@@ -2653,8 +3666,8 @@ func (a *App) CancelActiveTask() bool {
 
 func (a *App) beginTask() (context.Context, error) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.busy {
+		a.taskMu.Unlock()
 		return nil, a.biErr(
 			"another task is currently running, wait for it to finish or click Cancel",
 			"sedang ada proses lain yang berjalan, tunggu selesai atau klik Cancel",
@@ -2663,7 +3676,10 @@ func (a *App) beginTask() (context.Context, error) {
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.busy = true
 	a.cancelTask = cancel
+	a.hasTaskError.Store(false)
+	a.taskMu.Unlock()
 	runtime.EventsEmit(a.ctx, "task:busy", true)
+	a.syncTrayAndPowerState()
 	return ctx, nil
 }
 
@@ -2676,6 +3692,8 @@ func (a *App) endTask() {
 	a.cancelTask = nil
 	a.taskMu.Unlock()
 	runtime.EventsEmit(a.ctx, "task:busy", false)
+	debug.FreeOSMemory()
+	a.syncTrayAndPowerState()
 }
 
 func (a *App) biErr(enMsg, idMsg string) error {
@@ -2704,6 +3722,12 @@ func (a *App) emitBiLog(level, enMsg, idMsg string) {
 
 	if a.ctx != nil {
 		runtime.EventsEmit(a.ctx, "terminal:log", ev)
+	}
+	if strings.EqualFold(level, "ERROR") {
+		a.hasTaskError.Store(true)
+		if a.trayMgr != nil {
+			go a.syncTrayAndPowerState()
+		}
 	}
 }
 

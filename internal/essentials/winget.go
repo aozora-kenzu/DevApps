@@ -44,6 +44,7 @@ type WingetTableRow struct {
 	InstalledVer string `json:"installedVer,omitempty"`
 	HasUpdate    bool   `json:"hasUpdate,omitempty"`
 	MatchedBy    string `json:"matchedBy,omitempty"`
+	IconURL      string `json:"iconUrl,omitempty"`
 }
 
 // CheckEnvironment inspects whether winget.exe is available and whether UniDevUI is elevated (UAC Admin).
@@ -208,6 +209,8 @@ func RunEssentialAction(ctx context.Context, app EssentialApp, mode, version str
 	switch strings.ToLower(mode) {
 	case "update":
 		args = []string{"upgrade", "--id", app.WingetID, "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements"}
+	case "uninstall":
+		args = []string{"uninstall", "--id", app.WingetID, "-e", "--silent", "--accept-source-agreements"}
 	case "fix":
 		args = []string{"install", "--id", app.WingetID, "-e", "--force", "--silent", "--accept-package-agreements", "--accept-source-agreements"}
 	default:
@@ -217,7 +220,7 @@ func RunEssentialAction(ctx context.Context, app EssentialApp, mode, version str
 	if app.Source != "" {
 		args = append(args, "--source", app.Source)
 	}
-	if mode != "update" && version != "" && !strings.EqualFold(version, "latest") {
+	if mode != "update" && mode != "uninstall" && version != "" && !strings.EqualFold(version, "latest") {
 		args = append(args, "-v", version)
 	}
 

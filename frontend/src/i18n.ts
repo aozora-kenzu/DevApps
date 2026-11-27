@@ -24,21 +24,34 @@ export interface Translations {
     navCore: string;
     navStack: string;
     navTools: string;
+    navPkgMgr: string;
     navUserPath: string;
-    activeInPathTitle: string;
-    noActiveInPath: string;
+    envSectionTitle: string;
+    envPathScopeLabel: string;
+    envLastCheckLabel: string;
+    envCheckedNever: string;
+    envWingetLabel: string;
+    envPkgMgrLabel: string;
+    envPrivilegeLabel: string;
+    envPrivilegeAdmin: string;
+    envPrivilegeStandard: string;
+    envMissingLabel: string;
     secCoreTitle: string;
     secCoreSubtitle: (baseDir: string) => string;
     secStackTitle: string;
     secStackSubtitle: string;
     secToolsTitle: string;
     secToolsSubtitle: string;
+    secPkgMgrTitle: string;
+    secPkgMgrSubtitle: string;
     emptyCore: string;
     emptyStack: string;
     emptyTools: string;
+    emptyPkgMgr: string;
     badgeCore: string;
     badgeStack: string;
     badgeCLI: string;
+    badgePkgMgr: string;
     badgeSDK: string;
     badgeNotInstalled: string;
     badgeExtractedOnly: string;
@@ -135,10 +148,6 @@ export interface Translations {
     essCatChat: string;
     essCatDownloaders: string;
     essCatSearch: string;
-    essBatchTitle: string;
-    essSelectedCount: (n: number) => string;
-    essSelectMissing: string;
-    essClearSel: string;
     essInstallSelected: (n: number) => string;
     essWingetReady: (ver: string) => string;
     essWingetMissing: string;
@@ -206,6 +215,31 @@ export interface Translations {
     essBadgeWingetPinned: string;
     essBadgeLocalEntry: string;
     essLocalEntryNoUpdateTip: string;
+    pkgFilterAllManagers: (n: number) => string;
+    pkgBtnUninstall: string;
+    pkgBtnUninstallTip: string;
+    pkgSearchSelectorLabel: string;
+    pkgSearchClearBtn: string;
+    pkgSearchPendingNote: (names: string[]) => string;
+    pkgSearchFilterAll: (n: number) => string;
+    pkgSearchNoAvailMgrs: string;
+    pkgSearchInstallWithTip: string;
+    pkgMgrNotReady: (mgr: string) => string;
+    pkgMgrSearchPyPIHint: string;
+    pkgManagersPill: (n: number) => string;
+    pkgDependenciesLabel: string;
+    pkgScreenshotsLabel: string;
+    pkgDownloadCountLabel: string;
+    pkgBtnSkipVersion: string;
+    pkgBtnSkipVersionTip: (v: string) => string;
+    pkgBadgeSkipped: (v: string) => string;
+    pkgBtnClearSkip: string;
+    pkgBtnClearSkipTip: string;
+    pkgBtnPause7d: string;
+    pkgBtnPause7dTip: string;
+    pkgBadgePausedUntil: (d: string) => string;
+    pkgBtnResumeUpdates: string;
+    pkgBtnResumeUpdatesTip: string;
 
     // About Modal
     btnAbout: string;
@@ -237,6 +271,36 @@ export interface Translations {
     aboutUpdateNoAssetNote: string;
     aboutUpdateNotesLabel: string;
     aboutUpdateLastChecked: (ts: string) => string;
+    winMinimizeTip: string;
+    winMaximizeTip: string;
+    winRestoreTip: string;
+    winCloseTip: string;
+    btnSettingsTooltip: string;
+    settingsTitle: string;
+    settingsSecGeneral: string;
+    settingsLangLabel: string;
+    settingsSecWindow: string;
+    settingsCloseActionLabel: string;
+    settingsCloseAsk: string;
+    settingsCloseTray: string;
+    settingsCloseQuit: string;
+    settingsAutoStartLabel: string;
+    settingsAutoStartDesc: string;
+    settingsStartInTrayLabel: string;
+    settingsStartInTrayDesc: string;
+    settingsSecUpdates: string;
+    settingsAutoCheckLabel: string;
+    settingsAutoCheckDesc: string;
+    settingsIntervalLabel: string;
+    settingsIntervalHours: (h: number) => string;
+    settingsDelayScanLabel: string;
+    settingsDelayScanDesc: string;
+    settingsSaveBtn: string;
+    closeConfirmTitle: string;
+    closeConfirmDesc: string;
+    closeConfirmRemember: string;
+    closeConfirmTrayBtn: string;
+    closeConfirmQuitBtn: string;
 }
 
 const en: Translations = {
@@ -263,21 +327,34 @@ const en: Translations = {
     navCore: 'Core Runtimes',
     navStack: 'Dev Stack',
     navTools: 'CLI & SDK Tools',
+    navPkgMgr: 'Package Managers',
     navUserPath: 'User PATH',
-    activeInPathTitle: 'Active in PATH',
-    noActiveInPath: 'No UniDevUI tools in User PATH yet.',
+    envSectionTitle: 'Environment',
+    envPathScopeLabel: 'PATH Scope',
+    envLastCheckLabel: 'Checked',
+    envCheckedNever: 'Not yet',
+    envWingetLabel: 'Winget',
+    envPkgMgrLabel: 'Pkg Managers',
+    envPrivilegeLabel: 'Privilege',
+    envPrivilegeAdmin: 'Administrator',
+    envPrivilegeStandard: 'Standard User',
+    envMissingLabel: 'Missing',
     secCoreTitle: 'Core Runtimes & Portable Apps',
     secCoreSubtitle: (baseDir) => `Extracted to ${baseDir} · Activate PATH manually per app`,
     secStackTitle: 'Dev Stack & Compilers (Portable Archives)',
     secStackSubtitle: '.NET SDK LTS, Rust, WinLibs GCC, CMake, 7-Zip CLI',
     secToolsTitle: 'CLI & Windows SDK Installers (via CMD / Winget)',
     secToolsSubtitle: 'Wails CLI, Tauri CLI, VS Build Tools 2022 & WebView2 Runtime',
+    secPkgMgrTitle: 'Package Managers (CLI & Global Tools)',
+    secPkgMgrSubtitle: 'Scoop, Chocolatey, npm, pnpm, Bun & uv (Rust Cargo & Go CLI bundled in Core/Dev Stack)',
     emptyCore: 'No matching core packages.',
     emptyStack: 'No matching dev stack packages.',
     emptyTools: 'No matching CLI or SDK tools.',
+    emptyPkgMgr: 'No matching package managers.',
     badgeCore: 'Core',
     badgeStack: 'Dev Stack',
     badgeCLI: 'CLI Tool',
+    badgePkgMgr: 'Package Manager',
     badgeSDK: 'Windows SDK / Runtime',
     badgeNotInstalled: 'Not Installed',
     badgeExtractedOnly: 'Extracted (Not in PATH)',
@@ -373,11 +450,7 @@ const en: Translations = {
     essCatOffice: 'Media & Office',
     essCatChat: 'Chat, Mail & Cloud',
     essCatDownloaders: 'Download Managers',
-    essCatSearch: 'Winget Search',
-    essBatchTitle: 'Batch Install Queue',
-    essSelectedCount: (n) => `${n} app(s) selected`,
-    essSelectMissing: 'Select Missing',
-    essClearSel: 'Clear',
+    essCatSearch: 'Package Search',
     essInstallSelected: (n) => `Install Selected (${n})`,
     essWingetReady: (ver) => `Winget Ready (${ver || 'detected'})`,
     essWingetMissing: 'Winget not found on this Windows system',
@@ -395,20 +468,20 @@ const en: Translations = {
     essBadgeMsStore: 'MS Store',
     essBadgeUAC: 'UAC / Admin',
     essSecSubtitle: 'Silent install Windows apps via Winget · Check boxes to install multiple apps at once',
-    essEmpty: 'No matching Windows apps.',
-    essSearchInWinget: (q) => `Search "${q}" in Winget Catalog →`,
-    essSearchTitle: 'Winget Catalog Search',
-    essSearchSubtitle: 'Search any Windows application outside the built-in 27 list and install silently',
-    essSearchPlaceholder: 'Type app name or Winget ID (e.g. obsidian, everything, 7zip)...',
-    essSearchBtn: 'Search Winget',
-    essSearchEmpty: 'Enter a keyword above to search the official Winget & MS Store catalog.',
-    essSearching: 'Searching Winget catalog...',
+    essEmpty: 'No matching packages or apps.',
+    essSearchInWinget: (q) => `Search "${q}" in Package Search →`,
+    essSearchTitle: 'Unified Package Search',
+    essSearchSubtitle: 'Queries Winget, MS Store & all installed package managers simultaneously',
+    essSearchPlaceholder: 'Type package name or ID (e.g. obsidian, ripgrep, dotnet-ef, ruff)...',
+    essSearchBtn: 'Search',
+    essSearchEmpty: 'Enter a keyword to search across all available package managers at once.',
+    essSearching: 'Searching active package managers...',
     essPinToList: '+ Add to List',
     essAlreadyPinned: 'In List',
     essVersionLabel: 'Version:',
     essLaragonNoPopupNote: '6.0.0 (no license popup)',
     essDetailsBtn: 'Details',
-    essDetailsLoading: 'Fetching live Winget metadata & icon...',
+    essDetailsLoading: 'Fetching live package metadata, icons & screenshots...',
     essEnrichingSearch: 'Loading publishers, descriptions & icons...',
     essPublisherLabel: 'Publisher',
     essAuthorLabel: 'Author',
@@ -423,18 +496,18 @@ const en: Translations = {
     essDescriptionLabel: 'Description',
     essOpenHomepage: 'Open Homepage',
     essModalClose: 'Close',
-    essDetailsNoData: 'No additional Winget metadata returned for this package.',
+    essDetailsNoData: 'No additional package metadata returned for this item.',
     btnIgnoredConf: 'Ignored (.conf)',
     btnIgnoredConfTooltip: 'Open ignored_updates.conf in Notepad (stored next to UniDevUI.exe)',
     essCatInstalled: 'Installed & Updates',
-    essInstalledTitle: 'Installed Apps & Updates',
-    essInstalledSubtitle: 'Scans installed Windows apps via Winget · Update selectively or ignore apps you keep pinned',
+    essInstalledTitle: 'Installed Apps & Packages',
+    essInstalledSubtitle: 'Scans installed apps across Winget, Scoop, Chocolatey, npm/pnpm/Bun, uv/pip, Cargo, .NET Tool & PSGallery',
     essFilterUpdates: (n) => `Updates Available (${n})`,
     essFilterAllInstalled: (n) => `All Installed (${n})`,
     essFilterIgnored: (n) => `Ignored (${n})`,
     essUpdateAll: (n) => `Update All (${n})`,
     essUpdatesEmpty: 'All non-ignored apps are up to date!',
-    essInstalledEmpty: 'No matching installed apps found. Click Refresh Winget to rescan.',
+    essInstalledEmpty: 'No matching installed packages found. Click Refresh Winget to rescan.',
     essIgnoredEmpty: 'No ignored apps yet. Click Ignore on any app (like Laragon v6) to exclude it from updates.',
     essBtnIgnore: 'Ignore',
     essBtnIgnoreTip: 'Hide from Updates & All Installed, and set a blocking pin in Windows Winget if supported',
@@ -445,6 +518,31 @@ const en: Translations = {
     essBadgeWingetPinned: 'Winget Pinned',
     essBadgeLocalEntry: 'Local Entry',
     essLocalEntryNoUpdateTip: 'Local ARP/MSIX entry has no Winget catalog ID; ignored locally in UniDevUI',
+    pkgFilterAllManagers: (n) => `All Managers (${n})`,
+    pkgBtnUninstall: 'Uninstall',
+    pkgBtnUninstallTip: 'Uninstall this package using its package manager',
+    pkgSearchSelectorLabel: 'Manager:',
+    pkgSearchClearBtn: 'Clear',
+    pkgSearchPendingNote: (names) => `Still searching: ${names.join(', ')}...`,
+    pkgSearchFilterAll: (n) => `All (${n})`,
+    pkgSearchNoAvailMgrs: 'No package managers are installed yet. Install Winget or enable managers in Portable Runtimes → Package Managers.',
+    pkgSearchInstallWithTip: 'Choose JS package manager for installation',
+    pkgMgrNotReady: (mgr) => `${mgr} is not installed — install it in Portable Runtimes → Package Managers`,
+    pkgMgrSearchPyPIHint: 'PyPI looks up exact tool/package names (e.g. ruff, yt-dlp, httpie, black)',
+    pkgManagersPill: (n) => `${n} Pkg Managers`,
+    pkgDependenciesLabel: 'Dependencies',
+    pkgScreenshotsLabel: 'Screenshots',
+    pkgDownloadCountLabel: 'Downloads',
+    pkgBtnSkipVersion: 'Skip v',
+    pkgBtnSkipVersionTip: (v) => `Skip only v${v}; newer versions will notify again`,
+    pkgBadgeSkipped: (v) => `Skipped v${v}`,
+    pkgBtnClearSkip: 'Reset Skip',
+    pkgBtnClearSkipTip: 'Clear version skip and re-enable update alert for this version',
+    pkgBtnPause7d: 'Pause 7d',
+    pkgBtnPause7dTip: 'Temporarily pause update alerts for 7 days',
+    pkgBadgePausedUntil: (d) => `Paused until ${d}`,
+    pkgBtnResumeUpdates: 'Resume Updates',
+    pkgBtnResumeUpdatesTip: 'Resume update notifications for this app immediately',
 
     btnAbout: 'About',
     btnAboutTooltip: 'About UniDevUI, version, developer & license',
@@ -476,6 +574,36 @@ const en: Translations = {
     aboutUpdateNoAssetNote: 'Installer asset not found in release; please download from Release Page.',
     aboutUpdateNotesLabel: 'Release Notes',
     aboutUpdateLastChecked: (ts) => `Last checked: ${ts}`,
+    winMinimizeTip: 'Minimize',
+    winMaximizeTip: 'Maximize',
+    winRestoreTip: 'Restore Down',
+    winCloseTip: 'Close',
+    btnSettingsTooltip: 'Settings (Output Path, System Tray, Startup & Background Updates)',
+    settingsTitle: 'UniDevUI Settings',
+    settingsSecGeneral: 'General & Output Path',
+    settingsLangLabel: 'Interface Language',
+    settingsSecWindow: 'Window, System Tray & Startup',
+    settingsCloseActionLabel: 'When clicking Close (×)',
+    settingsCloseAsk: 'Always ask (Minimize to Tray or Exit)',
+    settingsCloseTray: 'Minimize to System Tray',
+    settingsCloseQuit: 'Exit UniDevUI immediately',
+    settingsAutoStartLabel: 'Launch automatically on Windows startup',
+    settingsAutoStartDesc: 'Adds UniDevUI to your Windows user login (HKCU Run) without needing Admin rights.',
+    settingsStartInTrayLabel: 'Start minimized in System Tray (--tray)',
+    settingsStartInTrayDesc: 'Keep desktop clean at boot while monitoring updates quietly in background.',
+    settingsSecUpdates: 'Background Update Monitor & Startup CPU',
+    settingsAutoCheckLabel: 'Periodically check updates & send Windows notifications',
+    settingsAutoCheckDesc: 'Scans runtimes, CLI tools, and Windows/package manager apps for updates.',
+    settingsIntervalLabel: 'Check interval',
+    settingsIntervalHours: (h) => (h === 1 ? 'Every 1 hour' : `Every ${h} hours`),
+    settingsDelayScanLabel: 'Quiet startup: defer heavy scans until system settles',
+    settingsDelayScanDesc: 'Prevents startup CPU spikes; manual Check Updates / Refresh still works anytime.',
+    settingsSaveBtn: 'Save Settings',
+    closeConfirmTitle: 'Minimize to System Tray?',
+    closeConfirmDesc: 'UniDevUI can stay quietly in the Windows System Tray to watch for app & runtime updates, or exit completely.',
+    closeConfirmRemember: 'Remember my choice (changeable later in Settings)',
+    closeConfirmTrayBtn: 'Minimize to Tray',
+    closeConfirmQuitBtn: 'Exit UniDevUI',
 };
 
 const id: Translations = {
@@ -502,21 +630,34 @@ const id: Translations = {
     navCore: 'Core Runtimes',
     navStack: 'Dev Stack',
     navTools: 'CLI & SDK Tools',
+    navPkgMgr: 'Package Managers',
     navUserPath: 'User PATH',
-    activeInPathTitle: 'Aktif di PATH',
-    noActiveInPath: 'Belum ada tool UniDevUI di User PATH.',
+    envSectionTitle: 'Lingkungan',
+    envPathScopeLabel: 'Target PATH',
+    envLastCheckLabel: 'Dicek',
+    envCheckedNever: 'Belum dicek',
+    envWingetLabel: 'Winget',
+    envPkgMgrLabel: 'Pkg Manager',
+    envPrivilegeLabel: 'Hak Akses',
+    envPrivilegeAdmin: 'Administrator',
+    envPrivilegeStandard: 'Standard User',
+    envMissingLabel: 'Tidak ada',
     secCoreTitle: 'Core Runtimes & Aplikasi Portable',
     secCoreSubtitle: (baseDir) => `Ekstrak ke ${baseDir} · Aktifkan PATH manual per aplikasi`,
     secStackTitle: 'Dev Stack & Compiler (Arsip Portable)',
     secStackSubtitle: '.NET SDK LTS, Rust, WinLibs GCC, CMake, 7-Zip CLI',
     secToolsTitle: 'Installer CLI & Windows SDK (via CMD / Winget)',
     secToolsSubtitle: 'Wails CLI, Tauri CLI, VS Build Tools 2022 & WebView2 Runtime',
+    secPkgMgrTitle: 'Package Managers (CLI & Tool Global)',
+    secPkgMgrSubtitle: 'Scoop, Chocolatey, npm, pnpm, Bun & uv (Rust Cargo & Go CLI bawaan di Core/Dev Stack)',
     emptyCore: 'Tidak ada paket core yang cocok.',
     emptyStack: 'Tidak ada stack tambahan yang cocok.',
     emptyTools: 'Tidak ada tool CLI/SDK yang cocok.',
+    emptyPkgMgr: 'Tidak ada package manager yang cocok.',
     badgeCore: 'Core',
     badgeStack: 'Dev Stack',
     badgeCLI: 'CLI Tool',
+    badgePkgMgr: 'Package Manager',
     badgeSDK: 'Windows SDK / Runtime',
     badgeNotInstalled: 'Belum Terpasang',
     badgeExtractedOnly: 'Terekstrak (Belum di PATH)',
@@ -612,11 +753,7 @@ const id: Translations = {
     essCatOffice: 'Media & Office',
     essCatChat: 'Chat, Mail & Cloud',
     essCatDownloaders: 'Download Manager',
-    essCatSearch: 'Cari di Winget',
-    essBatchTitle: 'Antrean Install Massal',
-    essSelectedCount: (n) => `${n} aplikasi dipilih`,
-    essSelectMissing: 'Pilih Belum Terpasang',
-    essClearSel: 'Kosongkan',
+    essCatSearch: 'Pencarian Paket',
     essInstallSelected: (n) => `Install Terpilih (${n})`,
     essWingetReady: (ver) => `Winget Siap (${ver || 'terdeteksi'})`,
     essWingetMissing: 'Winget tidak ditemukan di Windows ini',
@@ -634,20 +771,20 @@ const id: Translations = {
     essBadgeMsStore: 'MS Store',
     essBadgeUAC: 'UAC / Admin',
     essSecSubtitle: 'Instalasi silent aplikasi Windows via Winget · Centang untuk install banyak sekaligus',
-    essEmpty: 'Tidak ada aplikasi Windows Apps yang cocok.',
-    essSearchInWinget: (q) => `Cari "${q}" di Katalog Winget →`,
-    essSearchTitle: 'Pencarian Katalog Winget',
-    essSearchSubtitle: 'Cari aplikasi Windows lain di luar daftar 27 bawaan lalu install secara silent',
-    essSearchPlaceholder: 'Ketik nama aplikasi atau Winget ID (misal: obsidian, everything, 7zip)...',
-    essSearchBtn: 'Cari Winget',
-    essSearchEmpty: 'Masukkan kata kunci di atas untuk mencari di katalog resmi Winget & MS Store.',
-    essSearching: 'Mencari di katalog Winget...',
+    essEmpty: 'Tidak ada paket atau aplikasi yang cocok.',
+    essSearchInWinget: (q) => `Cari "${q}" di Pencarian Paket →`,
+    essSearchTitle: 'Pencarian Paket Terpadu',
+    essSearchSubtitle: 'Mencari serentak di Winget, MS Store & semua package manager yang aktif',
+    essSearchPlaceholder: 'Ketik nama paket atau ID (misal: obsidian, ripgrep, dotnet-ef, ruff)...',
+    essSearchBtn: 'Cari',
+    essSearchEmpty: 'Masukkan kata kunci untuk mencari serentak di semua package manager yang tersedia.',
+    essSearching: 'Sedang mencari di package manager aktif...',
     essPinToList: '+ Tambah ke List',
     essAlreadyPinned: 'Di Daftar',
     essVersionLabel: 'Versi:',
     essLaragonNoPopupNote: '6.0.0 (tanpa popup lisensi)',
     essDetailsBtn: 'Detail',
-    essDetailsLoading: 'Mengambil metadata Winget & ikon resmi...',
+    essDetailsLoading: 'Mengambil metadata paket, ikon & tangkapan layar...',
     essEnrichingSearch: 'Memuat penerbit, deskripsi & ikon resmi...',
     essPublisherLabel: 'Penerbit',
     essAuthorLabel: 'Pembuat',
@@ -662,18 +799,18 @@ const id: Translations = {
     essDescriptionLabel: 'Deskripsi',
     essOpenHomepage: 'Buka Situs Resmi',
     essModalClose: 'Tutup',
-    essDetailsNoData: 'Metadata Winget tambahan belum tersedia untuk paket ini.',
+    essDetailsNoData: 'Metadata tambahan belum tersedia untuk paket ini.',
     btnIgnoredConf: 'Ignored (.conf)',
     btnIgnoredConfTooltip: 'Buka ignored_updates.conf di Notepad (tersimpan di sebelah UniDevUI.exe)',
     essCatInstalled: 'Terpasang & Update',
-    essInstalledTitle: 'Aplikasi Terpasang & Update',
-    essInstalledSubtitle: 'Memindai semua aplikasi terpasang via Winget · Update selektif atau abaikan aplikasi yang dipertahankan',
+    essInstalledTitle: 'Aplikasi & Paket Terpasang',
+    essInstalledSubtitle: 'Memindai paket terpasang lewat Winget, Scoop, Chocolatey, npm/pnpm/Bun, uv/pip, Cargo, .NET Tool & PSGallery',
     essFilterUpdates: (n) => `Perlu Update (${n})`,
     essFilterAllInstalled: (n) => `Semua Terpasang (${n})`,
     essFilterIgnored: (n) => `Diabaikan (${n})`,
     essUpdateAll: (n) => `Update Semua (${n})`,
     essUpdatesEmpty: 'Semua aplikasi non-ignored sudah menggunakan versi terbaru!',
-    essInstalledEmpty: 'Tidak ada aplikasi terpasang yang cocok. Klik Refresh Winget untuk memindai ulang.',
+    essInstalledEmpty: 'Tidak ada paket terpasang yang cocok. Klik Refresh Winget untuk memindai ulang.',
     essIgnoredEmpty: 'Belum ada aplikasi yang diabaikan. Klik Abaikan pada aplikasi (mis. Laragon v6) agar tidak ikut ter-update.',
     essBtnIgnore: 'Abaikan',
     essBtnIgnoreTip: 'Sembunyikan dari daftar Update & Terpasang, serta kunci pin Winget Windows (jika didukung)',
@@ -684,6 +821,31 @@ const id: Translations = {
     essBadgeWingetPinned: 'Winget Pinned',
     essBadgeLocalEntry: 'Entri Lokal',
     essLocalEntryNoUpdateTip: 'Entri lokal ARP/MSIX tidak memiliki ID repositori Winget; diabaikan lokal di UniDevUI',
+    pkgFilterAllManagers: (n) => `Semua Manager (${n})`,
+    pkgBtnUninstall: 'Hapus',
+    pkgBtnUninstallTip: 'Uninstall paket ini menggunakan package manager-nya',
+    pkgSearchSelectorLabel: 'Manager:',
+    pkgSearchClearBtn: 'Bersihkan',
+    pkgSearchPendingNote: (names) => `Masih mencari di: ${names.join(', ')}...`,
+    pkgSearchFilterAll: (n) => `Semua (${n})`,
+    pkgSearchNoAvailMgrs: 'Belum ada package manager yang tersedia. Pasang Winget atau aktifkan manager di Portable Runtimes → Package Managers.',
+    pkgSearchInstallWithTip: 'Pilih package manager JS untuk instalasi',
+    pkgMgrNotReady: (mgr) => `${mgr} belum terpasang — silakan install dari Portable Runtimes → Package Managers`,
+    pkgMgrSearchPyPIHint: 'PyPI mencari berdasarkan nama paket/tool persis (mis. ruff, yt-dlp, httpie, black)',
+    pkgManagersPill: (n) => `${n} Pkg Managers`,
+    pkgDependenciesLabel: 'Dependensi',
+    pkgScreenshotsLabel: 'Tangkapan Layar',
+    pkgDownloadCountLabel: 'Total Unduhan',
+    pkgBtnSkipVersion: 'Lewati Versi',
+    pkgBtnSkipVersionTip: (v) => `Lewati hanya v${v}; versi lebih baru nanti tetap muncul`,
+    pkgBadgeSkipped: (v) => `Dilewati v${v}`,
+    pkgBtnClearSkip: 'Batal Lewati',
+    pkgBtnClearSkipTip: 'Hapus pengecualian versi dan aktifkan kembali notifikasi update',
+    pkgBtnPause7d: 'Jeda 7h',
+    pkgBtnPause7dTip: 'Tunda notifikasi update aplikasi ini selama 7 hari',
+    pkgBadgePausedUntil: (d) => `Dijeda s.d. ${d}`,
+    pkgBtnResumeUpdates: 'Lanjutkan',
+    pkgBtnResumeUpdatesTip: 'Aktifkan kembali notifikasi update aplikasi ini sekarang',
 
     btnAbout: 'Tentang',
     btnAboutTooltip: 'Tentang UniDevUI, versi, pengembang & lisensi',
@@ -715,6 +877,36 @@ const id: Translations = {
     aboutUpdateNoAssetNote: 'Aset installer tidak ditemukan pada rilis; silakan unduh lewat Halaman Rilis.',
     aboutUpdateNotesLabel: 'Catatan Rilis',
     aboutUpdateLastChecked: (ts) => `Terakhir dicek: ${ts}`,
+    winMinimizeTip: 'Perkecil (Minimize)',
+    winMaximizeTip: 'Perbesar (Maximize)',
+    winRestoreTip: 'Kembalikan Ukuran',
+    winCloseTip: 'Tutup Aplikasi',
+    btnSettingsTooltip: 'Pengaturan (Folder Output, System Tray, Startup & Update Otomatis)',
+    settingsTitle: 'Pengaturan UniDevUI',
+    settingsSecGeneral: 'Umum & Folder Output',
+    settingsLangLabel: 'Bahasa Antarmuka',
+    settingsSecWindow: 'Jendela, System Tray & Startup Windows',
+    settingsCloseActionLabel: 'Saat menekan tombol Tutup (×)',
+    settingsCloseAsk: 'Selalu tanya (Sembunyikan ke Tray atau Keluar)',
+    settingsCloseTray: 'Langsung sembunyikan ke System Tray',
+    settingsCloseQuit: 'Langsung keluar aplikasi',
+    settingsAutoStartLabel: 'Jalankan otomatis saat Windows startup / login',
+    settingsAutoStartDesc: 'Mendaftarkan UniDevUI di login user Windows (HKCU Run) tanpa perlu hak Admin.',
+    settingsStartInTrayLabel: 'Mulai tersembunyi di System Tray (--tray)',
+    settingsStartInTrayDesc: 'Desktop tetap bersih saat booting sementara aplikasi memantau update diam-diam.',
+    settingsSecUpdates: 'Pemantau Update Latar Belakang & CPU Startup',
+    settingsAutoCheckLabel: 'Cek update otomatis berkala & kirim notifikasi Windows',
+    settingsAutoCheckDesc: 'Memantau runtime, CLI tools, serta aplikasi Windows/package manager.',
+    settingsIntervalLabel: 'Interval pengecekan',
+    settingsIntervalHours: (h) => `Setiap ${h} jam`,
+    settingsDelayScanLabel: 'Startup senyap: tunda scan berat sampai sistem stabil',
+    settingsDelayScanDesc: 'Mencegah lonjakan CPU 100% saat buka aplikasi; tombol Check Updates manual tetap langsung jalan.',
+    settingsSaveBtn: 'Simpan Pengaturan',
+    closeConfirmTitle: 'Sembunyikan ke System Tray?',
+    closeConfirmDesc: 'UniDevUI dapat tetap berjalan ringan di System Tray untuk memantau pembaruan aplikasi, atau keluar sepenuhnya.',
+    closeConfirmRemember: 'Ingat pilihan saya (dapat diubah nanti di Pengaturan)',
+    closeConfirmTrayBtn: 'Minimize ke Tray',
+    closeConfirmQuitBtn: 'Keluar Aplikasi',
 };
 
 export function getT(lang: string | undefined): Translations {
@@ -759,12 +951,30 @@ const toolDescriptionsID: Record<string, string> = {
     tauri: 'Build aplikasi desktop Rust + WebView2 (cargo tauri)',
     vsbuildtools: 'Compiler MSVC (cl.exe), linker & Windows SDK untuk Rust/CGo',
     webview2: 'Runtime WebView2 Evergreen wajib untuk aplikasi Wails & Tauri',
+    scoop: 'Installer CLI & bucket Windows berbasis user-space (tanpa Admin)',
+    choco: 'Package manager Windows klasik untuk aplikasi & CLI',
+    npm: 'Package manager global bawaan Node.js',
+    pnpm: 'Package manager Node.js yang cepat dan hemat ruang disk',
+    bun: 'Runtime JavaScript & package manager all-in-one super cepat',
+    uv: 'Package & venv manager Python super cepat (Astral)',
+    pip: 'Installer paket Python resmi dari PyPI (bawaan Python)',
+    cargo: 'Package & CLI tool manager Rust dari crates.io (bawaan Rust)',
+    dotnet: 'Manajer global CLI tool .NET dari NuGet (bawaan .NET SDK)',
+    psgallery: 'Manajer modul & skrip PowerShell Gallery via PowerShell 7',
 };
 
 const toolRequiresID: Record<string, string> = {
-    wails2: 'Membutuhkan Go',
-    wails3: 'Membutuhkan Go',
-    tauri: 'Membutuhkan Rust + VS Build Tools',
+    wails2: 'Go',
+    wails3: 'Go',
+    tauri: 'Rust + VS Build Tools',
+    scoop: 'PowerShell + Git',
+    choco: 'Admin (UAC)',
+    npm: 'Node.js',
+    pnpm: 'Node.js (atau Standalone)',
+    pip: 'Python',
+    cargo: 'Rust Toolchain',
+    dotnet: '.NET SDK',
+    psgallery: 'PowerShell 7',
 };
 
 const essentialDescriptionsID: Record<string, string> = {
@@ -817,7 +1027,7 @@ export function localizeToolDesc(toolId: string, fallback: string, lang: Lang): 
 export function localizeToolRequires(toolId: string, fallback: string | undefined, lang: Lang): string {
     if (!fallback) return '';
     if (lang === 'id' && toolRequiresID[toolId]) {
-        return `${getT(lang).requiresLabel}: ${fallback}`;
+        return `${getT(lang).requiresLabel}: ${toolRequiresID[toolId]}`;
     }
     return `${getT(lang).requiresLabel}: ${fallback}`;
 }
