@@ -16,6 +16,7 @@
 [![TypeScript](https://img.shields.io/badge/Frontend-TypeScript%20%2B%20Vite-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](frontend/package.json)
 [![License: MIT](https://img.shields.io/github/license/aozora-kenzu/UniDevUI?style=for-the-badge&color=22c55e)](LICENSE)
 [![Downloads](https://img.shields.io/github/downloads/aozora-kenzu/UniDevUI/total?style=for-the-badge&color=8b5cf6)](https://github.com/aozora-kenzu/UniDevUI/releases)
+[![Contributors](https://img.shields.io/github/contributors/aozora-kenzu/UniDevUI?style=for-the-badge&color=f59e0b)](https://github.com/aozora-kenzu/UniDevUI/graphs/contributors)
 
 </div>
 
@@ -149,6 +150,14 @@ go test -v -short -count=1 ./...
 # Build standalone portable binary -> build/bin/UniDevUI.exe
 wails build -clean
 ```
+
+---
+
+## Contributors
+
+<a href="https://github.com/aozora-kenzu/UniDevUI/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=aozora-kenzu/UniDevUI" alt="UniDevUI Contributors" />
+</a>
 
 ---
 
